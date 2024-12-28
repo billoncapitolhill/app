@@ -33,6 +33,10 @@ def create_app():
         introduced_date = db.Column(db.DateTime)
         last_updated = db.Column(db.DateTime)
         category = db.Column(db.String(100))
+        house_status = db.Column(db.String(100))
+        senate_status = db.Column(db.String(100))
+        next_vote_date = db.Column(db.DateTime)
+        last_action = db.Column(db.String(500))
         
         def to_dict(self):
             return {
@@ -43,7 +47,11 @@ def create_app():
                 'status': self.status,
                 'introduced_date': self.introduced_date.isoformat() if self.introduced_date else None,
                 'last_updated': self.last_updated.isoformat() if self.last_updated else None,
-                'category': self.category
+                'category': self.category,
+                'house_status': self.house_status,
+                'senate_status': self.senate_status,
+                'next_vote_date': self.next_vote_date.isoformat() if self.next_vote_date else None,
+                'last_action': self.last_action
             }
 
     # Routes
