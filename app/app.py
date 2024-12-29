@@ -19,6 +19,14 @@ def create_app():
     # Database configuration
     app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///bills.db')
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_size': 5,
+        'pool_timeout': 30,
+        'pool_recycle': 1800,
+        'connect_args': {
+            'sslmode': 'require'
+        }
+    }
     
     # Initialize extensions
     db.init_app(app)
@@ -68,6 +76,7 @@ def create_app():
             query = query.filter_by(status=status)
             
         bills = query.all()
+        print(f"Retrieved {len(bills)} bills from database")  # Debug log
         return jsonify([bill.to_dict() for bill in bills])
 
     @app.route('/api/bills/<bill_id>', methods=['GET'])
@@ -86,8 +95,21 @@ def create_app():
         bills = Bill.query.all()
         return jsonify([bill.to_dict() for bill in bills])
 
+    @app.route('/api/bills/fetch', methods=['POST'])
+    def trigger_fetch_bills():
+        try:
+            fetch_and_store_bills()
+            return jsonify({"message": "Bills fetched and stored successfully"}), 200
+        except Exception as e:
+            print(f"Error in fetch_bills: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
     with app.app_context():
         db.create_all()
+        # Check if database is empty and fetch initial data
+        if Bill.query.count() == 0:
+            print("Database is empty, fetching initial bills...")
+            fetch_and_store_bills()
 
     return app
 
@@ -125,15 +147,30 @@ def fetch_and_store_bills():
     base_url = "https://api.congress.gov/v3"
     endpoint = "/bill"
     url = f"{base_url}{endpoint}"
+    
+    api_key = os.getenv("CONGRESS_API_KEY")
+    if not api_key:
+        print("Error: CONGRESS_API_KEY environment variable not set")
+        return
+        
     headers = {
-        'Authorization': f'Bearer {os.getenv("CONGRESS_API_KEY")}'
+        'Authorization': f'Bearer {api_key}'
     }
     
     try:
+        print(f"Fetching bills from {url}")
         response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            bills_data = response.json()
-            for bill in bills_data.get('bills', []):
+        response.raise_for_status()  # This will raise an exception for 4XX/5XX status codes
+        
+        bills_data = response.json()
+        if not bills_data.get('bills'):
+            print("Warning: No bills found in API response")
+            return
+            
+        print(f"Retrieved {len(bills_data['bills'])} bills from API")
+        
+        for bill in bills_data.get('bills', []):
+            try:
                 # Assuming 'bills' is the key in the JSON response
                 # Create or update Bill objects in the database
                 bill_obj = Bill(
@@ -151,9 +188,21 @@ def fetch_and_store_bills():
                     last_action=bill.get('last_action', '')
                 )
                 db.session.merge(bill_obj)
-            db.session.commit()
-            print("Bills fetched and stored successfully.")
-        else:
-            print(f"Failed to fetch bills: {response.status_code}")
+                
+            except KeyError as e:
+                print(f"Error processing bill: Missing required field {str(e)}")
+                continue
+            except ValueError as e:
+                print(f"Error processing bill: Invalid date format - {str(e)}")
+                continue
+                
+        db.session.commit()
+        print("Bills fetched and stored successfully.")
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Error making API request: {str(e)}")
+        raise
     except Exception as e:
-        print(f"An error occurred: {e}")
+        print(f"Unexpected error: {str(e)}")
+        db.session.rollback()
+        raise
