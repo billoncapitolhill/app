@@ -81,6 +81,11 @@ def create_app():
         bills = Bill.query.filter(Bill.title.ilike(f'%{query}%')).all()
         return jsonify([bill.to_dict() for bill in bills])
 
+    @app.route('/bills', methods=['GET'])
+    def display_bills():
+        bills = Bill.query.all()
+        return jsonify([bill.to_dict() for bill in bills])
+
     with app.app_context():
         db.create_all()
 
