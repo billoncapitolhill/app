@@ -9,6 +9,7 @@ import time
 import logging
 from sqlalchemy import text
 import socket
+import dns.resolver
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,39 +35,63 @@ def get_database_url():
         # Extract host from database URL
         host = db_url.split('@')[1].split('/')[0].split(':')[0]
         
-        # Try to resolve IP address
-        try:
-            ip_addr = socket.gethostbyname(host)
-            logger.info(f"Resolved {host} to {ip_addr}")
-            
-            # Ensure the URL has the required SSL parameters
-            if '?' not in db_url:
-                db_url += '?'
-            elif not db_url.endswith('&') and not db_url.endswith('?'):
-                db_url += '&'
-                
-            ssl_params = [
-                'sslmode=verify-full',
-                'application_name=bill-tracker',
-                'client_encoding=utf8',
-                'connect_timeout=10'
-            ]
-            
-            # Add SSL parameters if they're not already present
-            for param in ssl_params:
-                if param.split('=')[0] not in db_url:
-                    db_url += param + '&'
-            
-            # Remove trailing & if present
-            if db_url.endswith('&'):
-                db_url = db_url[:-1]
-                
-        except socket.gaierror:
-            logger.warning(f"Could not resolve hostname {host}, using as is")
-    except Exception as e:
-        logger.error(f"Error parsing database URL: {str(e)}")
+        # Try different approaches to resolve the host
+        resolved_ip = None
         
-    logger.info(f"Using database: {db_url.split('@')[1] if '@' in db_url else 'unknown'}")
+        # Try direct DNS resolution
+        try:
+            resolved_ip = socket.gethostbyname(host)
+            logger.info(f"Direct DNS resolution successful: {host} -> {resolved_ip}")
+        except socket.gaierror:
+            logger.warning(f"Direct DNS resolution failed for {host}")
+            
+            # Try with different DNS servers
+            dns_servers = ['8.8.8.8', '1.1.1.1']  # Google DNS and Cloudflare DNS
+            for dns_server in dns_servers:
+                try:
+                    resolver = dns.resolver.Resolver()
+                    resolver.nameservers = [dns_server]
+                    answers = resolver.resolve(host, 'A')
+                    if answers:
+                        resolved_ip = answers[0].address
+                        logger.info(f"DNS resolution successful using {dns_server}: {host} -> {resolved_ip}")
+                        break
+                except Exception as e:
+                    logger.warning(f"DNS resolution failed using {dns_server}: {str(e)}")
+        
+        if resolved_ip:
+            # Replace hostname with IP in the URL
+            db_url = db_url.replace(host, resolved_ip)
+            logger.info(f"Using IP address {resolved_ip} instead of hostname {host}")
+        else:
+            logger.warning(f"Could not resolve {host}, using original hostname")
+            
+        # Add SSL parameters
+        if '?' not in db_url:
+            db_url += '?'
+        elif not db_url.endswith('&') and not db_url.endswith('?'):
+            db_url += '&'
+            
+        ssl_params = [
+            'sslmode=require',  # Changed from verify-full to require
+            'application_name=bill-tracker',
+            'client_encoding=utf8',
+            'connect_timeout=10'
+        ]
+        
+        for param in ssl_params:
+            if param.split('=')[0] not in db_url:
+                db_url += param + '&'
+        
+        if db_url.endswith('&'):
+            db_url = db_url[:-1]
+            
+    except Exception as e:
+        logger.error(f"Error configuring database URL: {str(e)}")
+        
+    # Log the final URL (without credentials)
+    safe_url = db_url.split('@')[1] if '@' in db_url else 'unknown'
+    logger.info(f"Final database connection string: ...@{safe_url}")
     return db_url
 
 def test_db_connection(db_url):
