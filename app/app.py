@@ -29,6 +29,22 @@ def get_database_url():
     # If the URL starts with postgres://, replace it with postgresql://
     if db_url.startswith('postgres://'):
         db_url = db_url.replace('postgres://', 'postgresql://', 1)
+    
+    try:
+        # Extract host from database URL
+        host = db_url.split('@')[1].split('/')[0].split(':')[0]
+        
+        # Try to resolve IP address
+        try:
+            ip_addr = socket.gethostbyname(host)
+            logger.info(f"Resolved {host} to {ip_addr}")
+            
+            # Replace hostname with IP in connection string
+            db_url = db_url.replace(host, ip_addr)
+        except socket.gaierror:
+            logger.warning(f"Could not resolve hostname {host}, using as is")
+    except Exception as e:
+        logger.error(f"Error parsing database URL: {str(e)}")
         
     logger.info(f"Using database: {db_url.split('@')[1] if '@' in db_url else 'unknown'}")
     return db_url
@@ -102,7 +118,8 @@ def create_app():
             'keepalives_idle': 30,
             'keepalives_interval': 10,
             'keepalives_count': 5,
-            'application_name': 'bill-tracker'
+            'application_name': 'bill-tracker',
+            'options': '-c statement_timeout=30000'  # 30 second timeout
         }
     }
     
@@ -207,6 +224,70 @@ def create_app():
                 "error": str(e),
                 "database_url": get_database_url().split('@')[1] if get_database_url() else "not configured",
                 "tcp_connection": "failed"
+            }), 500
+
+    @app.route('/api/health/connection', methods=['GET'])
+    def connection_test():
+        try:
+            db_url = get_database_url()
+            if not db_url:
+                return jsonify({
+                    "status": "error",
+                    "message": "DATABASE_URL not configured"
+                }), 500
+
+            # Parse connection details
+            host = db_url.split('@')[1].split('/')[0].split(':')[0]
+            
+            # DNS test
+            try:
+                ip_addr = socket.gethostbyname(host)
+                dns_status = "success"
+                dns_ip = ip_addr
+            except socket.gaierror as e:
+                dns_status = "failed"
+                dns_ip = str(e)
+
+            # TCP connection test
+            try:
+                sock = socket.create_connection((host, 5432), timeout=5)
+                sock.close()
+                tcp_status = "success"
+            except Exception as e:
+                tcp_status = f"failed: {str(e)}"
+
+            # Database query test
+            try:
+                result = db.session.execute(text('SELECT version()')).scalar()
+                db.session.commit()
+                db_status = "success"
+                db_version = result
+            except Exception as e:
+                db_status = f"failed: {str(e)}"
+                db_version = None
+
+            return jsonify({
+                "status": "complete",
+                "tests": {
+                    "dns_resolution": {
+                        "status": dns_status,
+                        "resolved_ip": dns_ip
+                    },
+                    "tcp_connection": {
+                        "status": tcp_status,
+                        "port": 5432
+                    },
+                    "database_query": {
+                        "status": db_status,
+                        "version": db_version
+                    }
+                }
+            })
+        except Exception as e:
+            logger.error(f"Connection test failed: {str(e)}")
+            return jsonify({
+                "status": "error",
+                "error": str(e)
             }), 500
 
     # Initialize database
