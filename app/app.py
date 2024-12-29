@@ -5,6 +5,12 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 import requests
+import time
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -12,19 +18,55 @@ load_dotenv()
 # Initialize SQLAlchemy without binding to app
 db = SQLAlchemy()
 
+def get_database_url():
+    db_url = os.getenv('DATABASE_URL')
+    if not db_url:
+        logger.error("DATABASE_URL environment variable is not set")
+        return None
+    logger.info(f"Using database: {db_url.split('@')[1] if '@' in db_url else 'unknown'}")
+    return db_url
+
+def wait_for_db(app, max_retries=5, retry_interval=5):
+    retries = 0
+    while retries < max_retries:
+        try:
+            logger.info(f"Attempting database connection (attempt {retries + 1}/{max_retries})")
+            with app.app_context():
+                db.create_all()
+                # Test the connection with a simple query
+                db.session.execute('SELECT 1')
+                logger.info("Database connection successful")
+                return True
+        except Exception as e:
+            logger.error(f"Database connection failed: {str(e)}")
+            retries += 1
+            if retries < max_retries:
+                logger.info(f"Retrying in {retry_interval} seconds...")
+                time.sleep(retry_interval)
+    logger.error("Failed to connect to database after maximum retries")
+    return False
+
 def create_app():
     app = Flask(__name__)
     CORS(app)
 
     # Database configuration
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///bills.db')
+    db_url = get_database_url()
+    if not db_url:
+        logger.error("Failed to get database URL")
+        # Use SQLite as fallback
+        db_url = 'sqlite:///bills.db'
+        logger.info("Using SQLite as fallback database")
+
+    app.config['SQLALCHEMY_DATABASE_URI'] = db_url
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
         'pool_size': 5,
         'pool_timeout': 30,
         'pool_recycle': 1800,
         'connect_args': {
-            'sslmode': 'require'
+            'sslmode': 'require',
+            'connect_timeout': 10
         }
     }
     
@@ -104,13 +146,10 @@ def create_app():
             print(f"Error in fetch_bills: {str(e)}")
             return jsonify({"error": str(e)}), 500
 
-    with app.app_context():
-        db.create_all()
-        # Check if database is empty and fetch initial data
-        if Bill.query.count() == 0:
-            print("Database is empty, fetching initial bills...")
-            fetch_and_store_bills()
-
+    # Initialize database
+    if not wait_for_db(app):
+        logger.warning("Application starting without database connection")
+    
     return app
 
 app = create_app()
