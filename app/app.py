@@ -123,7 +123,7 @@ def create_app():
         'pool_timeout': 30,
         'pool_recycle': 1800,
         'connect_args': {
-            'sslmode': 'verify-full',  # Stricter SSL mode
+            'sslmode': 'require',  # Changed from verify-full to require
             'connect_timeout': 10,
             'keepalives': 1,
             'keepalives_idle': 30,
@@ -265,7 +265,7 @@ def create_app():
             # Parse connection details
             host = db_url.split('@')[1].split('/')[0].split(':')[0]
             
-            # DNS test
+            # Basic DNS test
             try:
                 ip_addr = socket.gethostbyname(host)
                 dns_status = "success"
