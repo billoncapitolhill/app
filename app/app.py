@@ -23,6 +23,11 @@ def get_database_url():
     if not db_url:
         logger.error("DATABASE_URL environment variable is not set")
         return None
+        
+    # If the URL starts with postgres://, replace it with postgresql://
+    if db_url.startswith('postgres://'):
+        db_url = db_url.replace('postgres://', 'postgresql://', 1)
+        
     logger.info(f"Using database: {db_url.split('@')[1] if '@' in db_url else 'unknown'}")
     return db_url
 
@@ -61,12 +66,18 @@ def create_app():
     app.config['SQLALCHEMY_DATABASE_URI'] = db_url
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-        'pool_size': 5,
+        'pool_size': 10,
         'pool_timeout': 30,
-        'pool_recycle': 1800,
+        'pool_recycle': 3600,
+        'max_overflow': 2,
         'connect_args': {
             'sslmode': 'require',
-            'connect_timeout': 10
+            'connect_timeout': 30,
+            'keepalives': 1,
+            'keepalives_idle': 30,
+            'keepalives_interval': 10,
+            'keepalives_count': 5,
+            'application_name': 'bill-tracker'
         }
     }
     
@@ -145,6 +156,24 @@ def create_app():
         except Exception as e:
             print(f"Error in fetch_bills: {str(e)}")
             return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/health', methods=['GET'])
+    def health_check():
+        try:
+            # Test database connection
+            db.session.execute('SELECT 1').scalar()
+            return jsonify({
+                "status": "healthy",
+                "database": "connected",
+                "database_url": get_database_url().split('@')[1] if get_database_url() else "not configured"
+            })
+        except Exception as e:
+            logger.error(f"Health check failed: {str(e)}")
+            return jsonify({
+                "status": "unhealthy",
+                "database": "disconnected",
+                "error": str(e)
+            }), 500
 
     # Initialize database
     if not wait_for_db(app):
