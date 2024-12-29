@@ -3,8 +3,8 @@ from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 import os
 from dotenv import load_dotenv
-import requests
 from datetime import datetime
+import requests
 
 # Load environment variables
 load_dotenv()
@@ -90,3 +90,21 @@ app = create_app()
 
 if __name__ == '__main__':
     app.run() 
+
+def fetch_congress_data():
+    url = 'https://api.congress.gov/v3/some-endpoint'
+    headers = {
+        'Authorization': f'Bearer {CONGRESS_API_KEY}'
+    }
+    response = requests.get(url, headers=headers)
+    data = response.json()
+    return data 
+
+def update_bills_from_congress():
+    try:
+        api_data = fetch_congress_data()
+        bills = parse_bill_data(api_data)
+        store_bills_in_db(bills)
+        print("Bills updated successfully.")
+    except Exception as e:
+        print(f"An error occurred: {e}") 
