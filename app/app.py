@@ -97,13 +97,20 @@ if __name__ == '__main__':
     app.run() 
 
 def fetch_congress_data():
-    url = 'https://api.congress.gov/v3/some-endpoint'
+    # Correct endpoint for fetching bills
+    url = 'https://api.congress.gov/v3/bill'
     headers = {
-        'Authorization': f'Bearer {CONGRESS_API_KEY}'
+        'Authorization': f'Bearer {os.getenv("CONGRESS_API_KEY")}'
     }
-    response = requests.get(url, headers=headers)
-    data = response.json()
-    return data 
+    
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()  # Raise an error for bad responses
+        data = response.json()
+        return data
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred while fetching data: {e}")
+        return None
 
 def update_bills_from_congress():
     try:
@@ -113,3 +120,40 @@ def update_bills_from_congress():
         print("Bills updated successfully.")
     except Exception as e:
         print(f"An error occurred: {e}") 
+
+def fetch_and_store_bills():
+    base_url = "https://api.congress.gov/v3"
+    endpoint = "/bill"
+    url = f"{base_url}{endpoint}"
+    headers = {
+        'Authorization': f'Bearer {os.getenv("CONGRESS_API_KEY")}'
+    }
+    
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            bills_data = response.json()
+            for bill in bills_data.get('bills', []):
+                # Assuming 'bills' is the key in the JSON response
+                # Create or update Bill objects in the database
+                bill_obj = Bill(
+                    id=bill['bill_id'],
+                    title=bill['title'],
+                    summary=bill.get('summary', ''),
+                    sponsor=bill.get('sponsor', ''),
+                    status=bill.get('status', ''),
+                    introduced_date=datetime.strptime(bill['introduced_date'], '%Y-%m-%d'),
+                    last_updated=datetime.strptime(bill['last_updated'], '%Y-%m-%d'),
+                    category=bill.get('category', ''),
+                    house_status=bill.get('house_status', ''),
+                    senate_status=bill.get('senate_status', ''),
+                    next_vote_date=datetime.strptime(bill['next_vote_date'], '%Y-%m-%d') if bill.get('next_vote_date') else None,
+                    last_action=bill.get('last_action', '')
+                )
+                db.session.merge(bill_obj)
+            db.session.commit()
+            print("Bills fetched and stored successfully.")
+        else:
+            print(f"Failed to fetch bills: {response.status_code}")
+    except Exception as e:
+        print(f"An error occurred: {e}")
