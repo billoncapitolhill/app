@@ -7,6 +7,8 @@ from datetime import datetime
 import requests
 import time
 import logging
+from sqlalchemy import text
+import socket
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -31,15 +33,38 @@ def get_database_url():
     logger.info(f"Using database: {db_url.split('@')[1] if '@' in db_url else 'unknown'}")
     return db_url
 
+def test_db_connection(db_url):
+    try:
+        # Parse the URL to get host and port
+        parts = db_url.split('@')[1].split('/')[0].split(':')
+        host = parts[0]
+        port = int(parts[1]) if len(parts) > 1 else 5432
+        
+        # Try to create a socket connection
+        sock = socket.create_connection((host, port), timeout=5)
+        sock.close()
+        logger.info(f"TCP connection to {host}:{port} successful")
+        return True
+    except Exception as e:
+        logger.error(f"TCP connection failed: {str(e)}")
+        return False
+
 def wait_for_db(app, max_retries=5, retry_interval=5):
     retries = 0
     while retries < max_retries:
         try:
             logger.info(f"Attempting database connection (attempt {retries + 1}/{max_retries})")
+            
+            # First test raw TCP connection
+            db_url = get_database_url()
+            if db_url and not test_db_connection(db_url):
+                raise Exception("Cannot establish TCP connection to database")
+            
             with app.app_context():
                 db.create_all()
-                # Test the connection with a simple query
-                db.session.execute('SELECT 1')
+                # Test the connection with a simple query using proper SQLAlchemy syntax
+                db.session.execute(text('SELECT 1'))
+                db.session.commit()
                 logger.info("Database connection successful")
                 return True
         except Exception as e:
@@ -160,19 +185,28 @@ def create_app():
     @app.route('/api/health', methods=['GET'])
     def health_check():
         try:
-            # Test database connection
-            db.session.execute('SELECT 1').scalar()
+            # Get database URL for connection testing
+            db_url = get_database_url()
+            tcp_connection = test_db_connection(db_url) if db_url else False
+            
+            # Test database query
+            db.session.execute(text('SELECT 1')).scalar()
+            db.session.commit()
+            
             return jsonify({
                 "status": "healthy",
                 "database": "connected",
-                "database_url": get_database_url().split('@')[1] if get_database_url() else "not configured"
+                "database_url": db_url.split('@')[1] if db_url else "not configured",
+                "tcp_connection": "successful" if tcp_connection else "failed"
             })
         except Exception as e:
             logger.error(f"Health check failed: {str(e)}")
             return jsonify({
                 "status": "unhealthy",
                 "database": "disconnected",
-                "error": str(e)
+                "error": str(e),
+                "database_url": get_database_url().split('@')[1] if get_database_url() else "not configured",
+                "tcp_connection": "failed"
             }), 500
 
     # Initialize database
