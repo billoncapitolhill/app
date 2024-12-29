@@ -26,38 +26,28 @@ def get_database_url():
         logger.error("DATABASE_URL environment variable is not set")
         return None
         
-    # If the URL starts with postgres://, replace it with postgresql://
-    if db_url.startswith('postgres://'):
-        db_url = db_url.replace('postgres://', 'postgresql://', 1)
-    
     try:
-        # Add SSL parameters
-        if '?' not in db_url:
-            db_url += '?'
-        elif not db_url.endswith('&') and not db_url.endswith('?'):
-            db_url += '&'
+        # Clean and validate the URL
+        db_url = db_url.strip()
+        
+        # If the URL starts with postgres://, replace it with postgresql://
+        if db_url.startswith('postgres://'):
+            db_url = 'postgresql://' + db_url[len('postgres://'):]
             
-        ssl_params = [
-            'sslmode=require',
-            'application_name=bill-tracker',
-            'client_encoding=utf8',
-            'connect_timeout=10'
-        ]
+        # Basic URL validation
+        if '@' not in db_url or '/' not in db_url:
+            logger.error("Invalid database URL format")
+            return None
+            
+        # Log the URL (without credentials)
+        safe_url = db_url.split('@')[1] if '@' in db_url else 'unknown'
+        logger.info(f"Using database: {safe_url}")
         
-        for param in ssl_params:
-            if param.split('=')[0] not in db_url:
-                db_url += param + '&'
-        
-        if db_url.endswith('&'):
-            db_url = db_url[:-1]
+        return db_url
             
     except Exception as e:
         logger.error(f"Error configuring database URL: {str(e)}")
-        
-    # Log the final URL (without credentials)
-    safe_url = db_url.split('@')[1] if '@' in db_url else 'unknown'
-    logger.info(f"Final database connection string: ...@{safe_url}")
-    return db_url
+        return None
 
 def test_db_connection(db_url):
     try:
@@ -117,23 +107,25 @@ def create_app():
     app.config['SQLALCHEMY_DATABASE_URI'] = db_url
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-        'pool_pre_ping': True,  # Enable connection health checks
+        'pool_pre_ping': True,
         'pool_size': 5,
         'max_overflow': 10,
         'pool_timeout': 30,
         'pool_recycle': 1800,
         'connect_args': {
-            'sslmode': 'require',  # Changed from verify-full to require
             'connect_timeout': 10,
             'keepalives': 1,
             'keepalives_idle': 30,
             'keepalives_interval': 10,
             'keepalives_count': 5,
             'client_encoding': 'utf8',
-            'application_name': 'bill-tracker',
-            'options': '-c timezone=UTC'
+            'application_name': 'bill-tracker'
         }
     }
+
+    # Only add SSL options for PostgreSQL connections
+    if db_url.startswith('postgresql://'):
+        app.config['SQLALCHEMY_ENGINE_OPTIONS']['connect_args']['sslmode'] = 'require'
 
     # Initialize extensions
     db.init_app(app)
