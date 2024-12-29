@@ -39,8 +39,28 @@ def get_database_url():
             ip_addr = socket.gethostbyname(host)
             logger.info(f"Resolved {host} to {ip_addr}")
             
-            # Replace hostname with IP in connection string
-            db_url = db_url.replace(host, ip_addr)
+            # Ensure the URL has the required SSL parameters
+            if '?' not in db_url:
+                db_url += '?'
+            elif not db_url.endswith('&') and not db_url.endswith('?'):
+                db_url += '&'
+                
+            ssl_params = [
+                'sslmode=verify-full',
+                'application_name=bill-tracker',
+                'client_encoding=utf8',
+                'connect_timeout=10'
+            ]
+            
+            # Add SSL parameters if they're not already present
+            for param in ssl_params:
+                if param.split('=')[0] not in db_url:
+                    db_url += param + '&'
+            
+            # Remove trailing & if present
+            if db_url.endswith('&'):
+                db_url = db_url[:-1]
+                
         except socket.gaierror:
             logger.warning(f"Could not resolve hostname {host}, using as is")
     except Exception as e:
@@ -107,24 +127,40 @@ def create_app():
     app.config['SQLALCHEMY_DATABASE_URI'] = db_url
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-        'pool_size': 10,
+        'pool_pre_ping': True,  # Enable connection health checks
+        'pool_size': 5,
+        'max_overflow': 10,
         'pool_timeout': 30,
-        'pool_recycle': 3600,
-        'max_overflow': 2,
+        'pool_recycle': 1800,
         'connect_args': {
-            'sslmode': 'require',
-            'connect_timeout': 30,
+            'sslmode': 'verify-full',  # Stricter SSL mode
+            'connect_timeout': 10,
             'keepalives': 1,
             'keepalives_idle': 30,
             'keepalives_interval': 10,
             'keepalives_count': 5,
+            'client_encoding': 'utf8',
             'application_name': 'bill-tracker',
-            'options': '-c statement_timeout=30000'  # 30 second timeout
+            'options': '-c timezone=UTC'
         }
     }
-    
+
     # Initialize extensions
     db.init_app(app)
+
+    @app.before_request
+    def before_request():
+        try:
+            # Verify database connection before each request
+            db.session.execute(text('SELECT 1'))
+            db.session.commit()
+        except Exception as e:
+            logger.error(f"Database connection error: {str(e)}")
+            db.session.rollback()
+            return jsonify({
+                "error": "Database connection error",
+                "details": str(e)
+            }), 500
 
     # Models
     class Bill(db.Model):
