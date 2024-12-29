@@ -9,7 +9,6 @@ import time
 import logging
 from sqlalchemy import text
 import socket
-import dns.resolver
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -32,40 +31,6 @@ def get_database_url():
         db_url = db_url.replace('postgres://', 'postgresql://', 1)
     
     try:
-        # Extract host from database URL
-        host = db_url.split('@')[1].split('/')[0].split(':')[0]
-        
-        # Try different approaches to resolve the host
-        resolved_ip = None
-        
-        # Try direct DNS resolution
-        try:
-            resolved_ip = socket.gethostbyname(host)
-            logger.info(f"Direct DNS resolution successful: {host} -> {resolved_ip}")
-        except socket.gaierror:
-            logger.warning(f"Direct DNS resolution failed for {host}")
-            
-            # Try with different DNS servers
-            dns_servers = ['8.8.8.8', '1.1.1.1']  # Google DNS and Cloudflare DNS
-            for dns_server in dns_servers:
-                try:
-                    resolver = dns.resolver.Resolver()
-                    resolver.nameservers = [dns_server]
-                    answers = resolver.resolve(host, 'A')
-                    if answers:
-                        resolved_ip = answers[0].address
-                        logger.info(f"DNS resolution successful using {dns_server}: {host} -> {resolved_ip}")
-                        break
-                except Exception as e:
-                    logger.warning(f"DNS resolution failed using {dns_server}: {str(e)}")
-        
-        if resolved_ip:
-            # Replace hostname with IP in the URL
-            db_url = db_url.replace(host, resolved_ip)
-            logger.info(f"Using IP address {resolved_ip} instead of hostname {host}")
-        else:
-            logger.warning(f"Could not resolve {host}, using original hostname")
-            
         # Add SSL parameters
         if '?' not in db_url:
             db_url += '?'
@@ -73,7 +38,7 @@ def get_database_url():
             db_url += '&'
             
         ssl_params = [
-            'sslmode=require',  # Changed from verify-full to require
+            'sslmode=require',
             'application_name=bill-tracker',
             'client_encoding=utf8',
             'connect_timeout=10'
