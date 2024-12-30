@@ -1,10 +1,12 @@
 import os
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List
 from dotenv import load_dotenv
 import traceback
+import time
+from functools import wraps
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,6 +58,54 @@ db_service = DatabaseService(url=supabase_url, key=supabase_key)
 congress_client = CongressClient(api_key=congress_api_key)
 ai_service = AIService(api_key=openai_api_key)
 
+def ensure_utc_datetime(date_str: str) -> datetime:
+    """Convert a date string to a UTC timezone-aware datetime object."""
+    if not date_str:
+        return datetime.now(timezone.utc)
+    
+    # Remove any trailing 'Z' and replace with +00:00
+    date_str = date_str.replace('Z', '+00:00')
+    
+    try:
+        # Try to parse as is (might already have timezone info)
+        dt = datetime.fromisoformat(date_str)
+    except ValueError:
+        # If parsing fails, assume UTC and add timezone
+        try:
+            dt = datetime.fromisoformat(date_str + '+00:00')
+        except ValueError:
+            # If all else fails, return current UTC time
+            return datetime.now(timezone.utc)
+    
+    # If datetime is naive (no timezone), make it UTC
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    
+    return dt
+
+def with_database_retry(max_retries=3, delay=5):
+    """Decorator to retry database operations with exponential backoff."""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            retries = 0
+            while retries < max_retries:
+                try:
+                    if asyncio.iscoroutinefunction(func):
+                        return await func(*args, **kwargs)
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    retries += 1
+                    if retries == max_retries:
+                        logger.error(f"Final database operation failure after {retries} retries: {str(e)}\n{traceback.format_exc()}")
+                        raise
+                    wait_time = delay * (2 ** (retries - 1))  # Exponential backoff
+                    logger.warning(f"Database operation failed, attempt {retries} of {max_retries}. Retrying in {wait_time} seconds...")
+                    await asyncio.sleep(wait_time)
+            return None
+        return wrapper
+    return decorator
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize services and start background tasks."""
@@ -91,16 +141,8 @@ async def process_bills():
                     # Check if bill already has a summary and hasn't been updated
                     if existing_bill and existing_bill.get("ai_summaries"):
                         try:
-                            # Convert both dates to UTC timezone-aware datetime objects
-                            bill_update_date = datetime.fromisoformat(bill.get("updateDate", "").replace('Z', '+00:00'))
-                            # Make summary_date timezone-aware by assuming UTC
-                            summary_date_str = existing_bill["ai_summaries"][0]["created_at"]
-                            if summary_date_str.endswith('Z'):
-                                summary_date = datetime.fromisoformat(summary_date_str.replace('Z', '+00:00'))
-                            elif '+' not in summary_date_str and '-' not in summary_date_str[10:]:
-                                summary_date = datetime.fromisoformat(summary_date_str + '+00:00')
-                            else:
-                                summary_date = datetime.fromisoformat(summary_date_str)
+                            bill_update_date = ensure_utc_datetime(bill.get("updateDate"))
+                            summary_date = ensure_utc_datetime(existing_bill["ai_summaries"][0]["created_at"])
                             
                             if bill_update_date <= summary_date:
                                 logger.info(f"Bill {bill['type']}{bill['number']} already has up-to-date AI summary")
@@ -193,9 +235,25 @@ async def process_bills():
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy"}
+    try:
+        # Test database connection
+        db_service.get_recent_summaries(limit=1)
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return {
+            "status": "unhealthy",
+            "database": "disconnected",
+            "error": str(e),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
 
 @app.get("/api/v1/bills/recent")
+@with_database_retry(max_retries=3, delay=5)
 async def get_recent_bills(limit: int = 10):
     """Get recent bills with their AI summaries."""
     try:
@@ -203,9 +261,16 @@ async def get_recent_bills(limit: int = 10):
         return {"bills": bills}
     except Exception as e:
         logger.error(f"Error getting recent bills: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "Database service temporarily unavailable",
+                "message": "Please try again in a few moments"
+            }
+        )
 
 @app.get("/api/v1/bills/{congress}/{bill_type}/{bill_number}")
+@with_database_retry(max_retries=3, delay=5)
 async def get_bill_details(congress: int, bill_type: str, bill_number: int):
     """Get details for a specific bill."""
     try:
@@ -217,9 +282,16 @@ async def get_bill_details(congress: int, bill_type: str, bill_number: int):
         raise
     except Exception as e:
         logger.error(f"Error getting bill details: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "Database service temporarily unavailable",
+                "message": "Please try again in a few moments"
+            }
+        )
 
 @app.get("/api/v1/summaries/recent")
+@with_database_retry(max_retries=3, delay=5)
 async def get_recent_summaries(limit: int = 10):
     """Get recent AI summaries."""
     try:
@@ -227,4 +299,10 @@ async def get_recent_summaries(limit: int = 10):
         return {"summaries": summaries}
     except Exception as e:
         logger.error(f"Error getting recent summaries: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "Database service temporarily unavailable",
+                "message": "Please try again in a few moments"
+            }
+        ) 
