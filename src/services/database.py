@@ -35,10 +35,27 @@ class DatabaseService:
     def upsert_bill(self, bill_data: Dict) -> None:
         """Insert or update a bill in the database."""
         try:
-            # Serialize datetime objects before sending to Supabase
+            # Ensure actions is a valid JSONB
+            if "actions" in bill_data and not isinstance(bill_data["actions"], (dict, list)):
+                bill_data["actions"] = []
+            
+            # Convert datetime objects to ISO format strings
             bill_data = self._serialize_datetime(bill_data)
+            
+            # Ensure all fields match the schema
+            valid_fields = {
+                "id", "congress_number", "bill_type", "bill_number", "title",
+                "description", "origin_chamber", "origin_chamber_code",
+                "introduced_date", "latest_action_date", "latest_action_text",
+                "update_date", "constitutional_authority_text", "url", "actions",
+                "created_at", "updated_at"
+            }
+            
+            # Remove any fields not in the schema
+            bill_data = {k: v for k, v in bill_data.items() if k in valid_fields}
+            
             self.client.table("bills").upsert(bill_data).execute()
-            logger.info("Successfully upserted bill %s", bill_data.get("billId"))
+            logger.info("Successfully upserted bill %s", bill_data.get("id"))
         except Exception as e:
             logger.error("Error upserting bill: %s", str(e))
             raise

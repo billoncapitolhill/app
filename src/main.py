@@ -38,12 +38,14 @@ async def process_bill(bill_data: Dict) -> None:
         congress = bill_data.get("congress")
         bill_type = bill_data.get("type")
         bill_number = bill_data.get("number")
-        bill_id = bill_data.get("billId")
         
-        if not all([congress, bill_type, bill_number, bill_id]):
-            logger.error("Missing required fields for bill: congress=%s, type=%s, number=%s, id=%s",
-                        congress, bill_type, bill_number, bill_id)
+        if not all([congress, bill_type, bill_number]):
+            logger.error("Missing required fields for bill: congress=%s, type=%s, number=%s",
+                        congress, bill_type, bill_number)
             return
+        
+        # Generate a consistent bill ID format
+        bill_id = f"{congress}-{bill_type}-{bill_number}"
         
         logger.info("Starting to process bill %s%s from Congress %s", 
                    bill_type, bill_number, congress)
@@ -66,10 +68,29 @@ async def process_bill(bill_data: Dict) -> None:
                    bill_type, bill_number)
         summary = ai_summarizer.summarize_bill(bill_details.get("text", ""))
         
+        # Format bill data for database
+        db_bill_data = {
+            "id": bill_id,
+            "congress_number": congress,
+            "bill_type": bill_type,
+            "bill_number": bill_number,
+            "title": bill_details.get("title"),
+            "description": bill_details.get("summary", ""),
+            "origin_chamber": bill_details.get("originChamber"),
+            "origin_chamber_code": bill_details.get("originChamberCode"),
+            "introduced_date": bill_details.get("introducedDate"),
+            "latest_action_date": bill_details.get("latestAction", {}).get("actionDate"),
+            "latest_action_text": bill_details.get("latestAction", {}).get("text"),
+            "update_date": bill_details.get("updateDate"),
+            "constitutional_authority_text": bill_details.get("constitutionalAuthorityText"),
+            "url": bill_details.get("url"),
+            "actions": bill_details.get("actions", [])
+        }
+        
         # Update database
         logger.info("Updating database with bill %s%s and its summary", 
                    bill_type, bill_number)
-        db_service.upsert_bill(bill_details)
+        db_service.upsert_bill(db_bill_data)
         db_service.upsert_ai_summary({
             "target_id": bill_id,
             "target_type": "bill",
