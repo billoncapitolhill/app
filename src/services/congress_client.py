@@ -60,7 +60,7 @@ class CongressClient:
         logger.info("Fetching details for bill %s%d in Congress %d", bill_type, bill_number, congress)
         return self._make_request(f"bill/{congress}/{bill_type}/{bill_number}")
 
-    def get_bill_amendments(self, congress: int, bill_type: str, bill_number: str) -> Optional[List[Dict]]:
+    def get_bill_amendments(self, congress: int, bill_type: str, bill_number: str) -> List[Dict]:
         """Fetch all amendments for a specific bill."""
         logger.info("Fetching amendments for bill %s%s in Congress %d", bill_type, bill_number, congress)
         # First, fetch the bill details to get amendment links or identifiers
@@ -104,13 +104,13 @@ class CongressClient:
         except HTTPError as http_err:
             if http_err.response.status_code == 404:
                 logger.warning("Bill %s%s not found in Congress %d", bill_type, bill_number, congress)
-                return None
+                return []
             else:
                 logger.error("HTTP error occurred while fetching bill %s%s: %s", bill_type, bill_number, http_err)
-                return None
+                return []
         except Exception as err:
             logger.error("An error occurred while fetching bill %s%s: %s", bill_type, bill_number, err)
-            return None
+            return []
 
     def get_amendment_details(self, congress: int, amendment_type: str, amendment_number: int) -> Dict:
         """Get detailed information about a specific amendment."""
