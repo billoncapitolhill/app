@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List
 from dotenv import load_dotenv
+import traceback
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +17,14 @@ from src.services.ai_service import AIService
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('app.log'),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
@@ -55,82 +63,119 @@ async def process_bills():
     while True:
         try:
             # Get recent bills from Congress.gov
-            bills_data = congress_client.get_recent_bills(congress=118, limit=50)
-            bills = bills_data.get("bills", [])
+            try:
+                bills_data = congress_client.get_recent_bills(congress=118, limit=50)
+                bills = bills_data.get("bills", [])
+            except Exception as e:
+                logger.error(f"Failed to fetch recent bills: {str(e)}\n{traceback.format_exc()}")
+                await asyncio.sleep(300)  # Wait 5 minutes before retrying
+                continue
             
             for bill in bills:
                 try:
                     # Check if we already have an AI summary for this bill
-                    existing_bill = db_service.get_bill_with_summaries(
-                        congress=bill["congress"],
-                        bill_type=bill["type"],
-                        bill_number=bill["number"]
-                    )
-                    
+                    try:
+                        existing_bill = db_service.get_bill_with_summaries(
+                            congress=bill["congress"],
+                            bill_type=bill["type"],
+                            bill_number=bill["number"]
+                        )
+                    except Exception as e:
+                        logger.error(f"Error checking existing bill {bill.get('type')}{bill.get('number')}: {str(e)}\n{traceback.format_exc()}")
+                        continue
+
+                    # Check if bill already has a summary and hasn't been updated
                     if existing_bill and existing_bill.get("ai_summaries"):
-                        logger.info(f"Bill {bill['type']}{bill['number']} already has AI summary")
+                        try:
+                            bill_update_date = datetime.fromisoformat(bill.get("updateDate", "").replace('Z', '+00:00'))
+                            summary_date = datetime.fromisoformat(existing_bill["ai_summaries"][0]["created_at"])
+                            
+                            if bill_update_date <= summary_date:
+                                logger.info(f"Bill {bill['type']}{bill['number']} already has up-to-date AI summary")
+                                continue
+                            else:
+                                logger.info(f"Bill {bill['type']}{bill['number']} has been updated, generating new summary")
+                        except Exception as e:
+                            logger.error(f"Error comparing dates for bill {bill.get('type')}{bill.get('number')}: {str(e)}\n{traceback.format_exc()}")
+                            continue
+
+                    # Get detailed bill information
+                    try:
+                        bill_details = congress_client.get_bill_details(
+                            congress=bill["congress"],
+                            bill_type=bill["type"],
+                            bill_number=bill["number"]
+                        )
+                    except Exception as e:
+                        logger.error(f"Error fetching details for bill {bill.get('type')}{bill.get('number')}: {str(e)}\n{traceback.format_exc()}")
                         continue
                     
-                    # Get detailed bill information
-                    bill_details = congress_client.get_bill_details(
-                        congress=bill["congress"],
-                        bill_type=bill["type"],
-                        bill_number=bill["number"]
-                    )
-                    
                     # Store bill in database
-                    bill_data = {
-                        "congress_number": bill["congress"],
-                        "bill_type": bill["type"],
-                        "bill_number": int(bill["number"]),
-                        "title": bill.get("title"),
-                        "description": bill_details.get("summary", ""),
-                        "origin_chamber": bill.get("originChamber"),
-                        "origin_chamber_code": bill.get("originChamberCode"),
-                        "introduced_date": bill.get("introducedDate"),
-                        "latest_action_date": bill.get("latestAction", {}).get("actionDate"),
-                        "latest_action_text": bill.get("latestAction", {}).get("text"),
-                        "update_date": bill.get("updateDate"),
-                        "url": bill.get("url"),
-                        "actions": bill_details.get("actions", [])
-                    }
-                    
-                    # Insert/update bill and get its ID
-                    stored_bill = db_service.upsert_bill(bill_data)
-                    if not stored_bill:
-                        logger.error(f"Failed to store bill {bill['type']}{bill['number']}")
+                    try:
+                        bill_data = {
+                            "congress_number": bill["congress"],
+                            "bill_type": bill["type"],
+                            "bill_number": int(bill["number"]),
+                            "title": bill.get("title"),
+                            "description": bill_details.get("summary", ""),
+                            "origin_chamber": bill.get("originChamber"),
+                            "origin_chamber_code": bill.get("originChamberCode"),
+                            "introduced_date": bill.get("introducedDate"),
+                            "latest_action_date": bill.get("latestAction", {}).get("actionDate"),
+                            "latest_action_text": bill.get("latestAction", {}).get("text"),
+                            "update_date": bill.get("updateDate"),
+                            "url": bill.get("url"),
+                            "actions": bill_details.get("actions", [])
+                        }
+                        
+                        stored_bill = db_service.upsert_bill(bill_data)
+                        if not stored_bill:
+                            logger.error(f"Failed to store bill {bill['type']}{bill['number']}")
+                            continue
+                    except Exception as e:
+                        logger.error(f"Error storing bill {bill.get('type')}{bill.get('number')}: {str(e)}\n{traceback.format_exc()}")
                         continue
                     
                     # Generate AI summary
-                    summary = await ai_service.generate_bill_summary(bill_details)
+                    try:
+                        summary = await ai_service.generate_bill_summary(bill_details)
+                    except Exception as e:
+                        logger.error(f"Error generating summary for bill {bill.get('type')}{bill.get('number')}: {str(e)}\n{traceback.format_exc()}")
+                        continue
                     
                     # Store AI summary
-                    summary_data = {
-                        "target_id": stored_bill["id"],
-                        "target_type": "bill",
-                        "summary": summary["summary"],
-                        "perspective": summary["perspective"],
-                        "key_points": summary["key_points"],
-                        "estimated_cost_impact": summary["estimated_cost_impact"],
-                        "government_growth_analysis": summary["government_growth_analysis"],
-                        "market_impact_analysis": summary["market_impact_analysis"],
-                        "liberty_impact_analysis": summary["liberty_impact_analysis"]
-                    }
-                    
-                    db_service.upsert_ai_summary(summary_data)
-                    logger.info(f"Successfully processed bill {bill['type']}{bill['number']}")
+                    try:
+                        summary_data = {
+                            "target_id": stored_bill["id"],
+                            "target_type": "bill",
+                            "summary": summary["summary"],
+                            "perspective": summary["perspective"],
+                            "key_points": summary["key_points"],
+                            "estimated_cost_impact": summary["estimated_cost_impact"],
+                            "government_growth_analysis": summary["government_growth_analysis"],
+                            "market_impact_analysis": summary["market_impact_analysis"],
+                            "liberty_impact_analysis": summary["liberty_impact_analysis"]
+                        }
+                        
+                        db_service.upsert_ai_summary(summary_data)
+                        logger.info(f"Successfully processed bill {bill['type']}{bill['number']}")
+                    except Exception as e:
+                        logger.error(f"Error storing summary for bill {bill.get('type')}{bill.get('number')}: {str(e)}\n{traceback.format_exc()}")
+                        continue
                     
                 except Exception as e:
-                    logger.error(f"Error processing bill {bill.get('type')}{bill.get('number')}: {str(e)}")
+                    logger.error(f"Unexpected error processing bill {bill.get('type')}{bill.get('number')}: {str(e)}\n{traceback.format_exc()}")
                     continue
                 
                 # Sleep briefly between bills to avoid rate limiting
                 await asyncio.sleep(1)
             
         except Exception as e:
-            logger.error(f"Error in bill processing loop: {str(e)}")
+            logger.error(f"Critical error in bill processing loop: {str(e)}\n{traceback.format_exc()}")
+            await asyncio.sleep(300)  # Wait 5 minutes before retrying
         
         # Sleep for an hour before checking for new bills
+        logger.info("Completed processing cycle, sleeping for 1 hour")
         await asyncio.sleep(3600)
 
 @app.get("/health")
