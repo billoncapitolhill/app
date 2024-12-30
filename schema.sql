@@ -51,9 +51,25 @@ CREATE TABLE IF NOT EXISTS ai_summaries (
     summary TEXT NOT NULL,
     analysis TEXT,
     sentiment DECIMAL,
+    perspective TEXT,
+    key_points JSONB,
+    estimated_cost_impact TEXT,
+    government_growth_analysis TEXT,
+    market_impact_analysis TEXT,
+    liberty_impact_analysis TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(target_id, target_type)
+    UNIQUE(target_id, target_type),
+    CONSTRAINT fk_bill_summary
+        FOREIGN KEY (target_id)
+        REFERENCES bills(id)
+        ON DELETE CASCADE
+        WHEN (target_type = 'bill'),
+    CONSTRAINT fk_amendment_summary
+        FOREIGN KEY (target_id)
+        REFERENCES amendments(id)
+        ON DELETE CASCADE
+        WHEN (target_type = 'amendment')
 );
 
 -- Create processing_status table
@@ -66,7 +82,17 @@ CREATE TABLE IF NOT EXISTS processing_status (
     last_processed TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(target_id, target_type)
+    UNIQUE(target_id, target_type),
+    CONSTRAINT fk_bill_status
+        FOREIGN KEY (target_id)
+        REFERENCES bills(id)
+        ON DELETE CASCADE
+        WHEN (target_type = 'bill'),
+    CONSTRAINT fk_amendment_status
+        FOREIGN KEY (target_id)
+        REFERENCES amendments(id)
+        ON DELETE CASCADE
+        WHEN (target_type = 'amendment')
 );
 
 -- Create indexes

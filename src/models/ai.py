@@ -11,7 +11,7 @@ class AISummary(BaseModel):
     target_id = Column(UUID(as_uuid=True), nullable=False)
     target_type = Column(String(20), nullable=False)  # 'bill' or 'amendment'
     summary = Column(Text, nullable=False)
-    perspective = Column(String(100), nullable=False)
+    perspective = Column(Text, nullable=False)
     key_points = Column(JSONB)
     estimated_cost_impact = Column(Text)
     government_growth_analysis = Column(Text)
