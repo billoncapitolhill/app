@@ -87,8 +87,16 @@ async def process_bills():
                     # Check if bill already has a summary and hasn't been updated
                     if existing_bill and existing_bill.get("ai_summaries"):
                         try:
+                            # Convert both dates to UTC timezone-aware datetime objects
                             bill_update_date = datetime.fromisoformat(bill.get("updateDate", "").replace('Z', '+00:00'))
-                            summary_date = datetime.fromisoformat(existing_bill["ai_summaries"][0]["created_at"])
+                            # Make summary_date timezone-aware by assuming UTC
+                            summary_date_str = existing_bill["ai_summaries"][0]["created_at"]
+                            if summary_date_str.endswith('Z'):
+                                summary_date = datetime.fromisoformat(summary_date_str.replace('Z', '+00:00'))
+                            elif '+' not in summary_date_str and '-' not in summary_date_str[10:]:
+                                summary_date = datetime.fromisoformat(summary_date_str + '+00:00')
+                            else:
+                                summary_date = datetime.fromisoformat(summary_date_str)
                             
                             if bill_update_date <= summary_date:
                                 logger.info(f"Bill {bill['type']}{bill['number']} already has up-to-date AI summary")
