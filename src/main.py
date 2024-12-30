@@ -56,3 +56,11 @@ async def log_requests(request: Request, call_next):
     response = await call_next(request)
     logger.info(f"Response status: {response.status_code}")
     return response 
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("Application startup event triggered.")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    logger.info("Application shutdown event triggered.") 
