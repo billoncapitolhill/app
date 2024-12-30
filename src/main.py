@@ -3,6 +3,10 @@ import logging
 import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, List
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 from fastapi import FastAPI, HTTPException
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
