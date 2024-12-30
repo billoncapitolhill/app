@@ -161,22 +161,37 @@ async def process_amendment(amendment_data: Dict) -> None:
 async def update_congress_data() -> None:
     """Update bills and amendments from Congress.gov."""
     try:
-        # Get updates from the last 24 hours
-        since_date = datetime.utcnow().replace(microsecond=0) - timedelta(days=1)
-        logger.info("Fetching updates since %s UTC", since_date.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        # Get recent bills from the current Congress (118th)
+        logger.info("Fetching recent bills from the 118th Congress")
         
-        updates = congress_client.get_updates_since(since_date)
+        updates = congress_client.get_recent_bills(118, limit=50)
+        bills = updates.get("bills", [])
+        amendments = []
+        
+        # For each bill, get its amendments
+        for bill in bills:
+            try:
+                bill_amendments = congress_client.get_bill_amendments(
+                    bill["congress"],
+                    bill["bill_type"],
+                    bill["bill_number"]
+                ).get("amendments", [])
+                amendments.extend(bill_amendments)
+            except Exception as e:
+                logger.error("Error fetching amendments for bill %s%s: %s",
+                           bill.get("bill_type"), bill.get("bill_number"), str(e))
+        
         logger.info("Received %d bills and %d amendments to process",
-                   len(updates.get("bills", [])), len(updates.get("amendments", [])))
+                   len(bills), len(amendments))
         
         # Process bills
-        for i, bill in enumerate(updates.get("bills", []), 1):
-            logger.info("Processing bill %d of %d", i, len(updates.get("bills", [])))
+        for i, bill in enumerate(bills, 1):
+            logger.info("Processing bill %d of %d", i, len(bills))
             await process_bill(bill)
         
         # Process amendments
-        for i, amendment in enumerate(updates.get("amendments", []), 1):
-            logger.info("Processing amendment %d of %d", i, len(updates.get("amendments", [])))
+        for i, amendment in enumerate(amendments, 1):
+            logger.info("Processing amendment %d of %d", i, len(amendments))
             await process_amendment(amendment)
             
         logger.info("Successfully completed Congress data update")
