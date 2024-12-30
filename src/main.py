@@ -15,6 +15,7 @@ from src.services.database import DatabaseService
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Set to DEBUG during development
 
 app = FastAPI(title="Congress Bill Analysis Platform")
 
