@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from src.services.database import DatabaseService
@@ -49,3 +49,10 @@ def get_recent_summaries(limit: int = 20):
     except Exception as e:
         logger.error(f"Error fetching recent summaries: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal Server Error") 
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"Incoming request: {request.method} {request.url}")
+    response = await call_next(request)
+    logger.info(f"Response status: {response.status_code}")
+    return response 
