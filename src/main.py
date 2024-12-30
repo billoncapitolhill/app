@@ -206,10 +206,11 @@ async def update_congress_data() -> None:
                 congress = bill.get("congress")
                 bill_type = bill.get("type")
                 bill_number = bill.get("number")
+                bill_id = bill.get("id")
                 
-                if not all([congress, bill_type, bill_number]):
-                    logger.warning("Skipping bill due to missing required fields: congress=%s, type=%s, number=%s",
-                                 congress, bill_type, bill_number)
+                if not all([congress, bill_type, bill_number, bill_id]):
+                    logger.warning("Skipping bill %d/%d due to missing required fields",
+                                 i, len(bills))
                     continue
                 
                 logger.info("Fetching amendments for bill %s%s from Congress %s",
@@ -234,8 +235,7 @@ async def update_congress_data() -> None:
             except Exception as e:
                 logger.error("Error fetching amendments for bill: %s", str(e))
         
-        logger.info("Received %d bills and %d amendments to process",
-                   len(bills), len(amendments))
+        logger.info("Received %d bills to process", len(bills))
         
         # Process bills
         for i, bill in enumerate(bills, 1):
@@ -245,38 +245,23 @@ async def update_congress_data() -> None:
                 bill_number = bill.get("number")
                 
                 if not all([congress, bill_type, bill_number]):
-                    logger.warning("Skipping bill %d/%d due to missing required fields",
-                                 i, len(bills))
+                    logger.warning("Skipping bill %d/%d due to missing required fields", i, len(bills))
                     continue
                 
-                logger.info("Processing bill %d of %d (%s%s)",
-                          i, len(bills), bill_type, bill_number)
+                logger.info("Processing bill %d of %d (%s%s)", i, len(bills), bill_type, bill_number)
                 await process_bill(bill)
+                
+                # Fetch and process amendments for this bill
+                amendments = congress_client.get_bill_amendments(congress, bill_type, bill_number)
+                if amendments:
+                    for amendment in amendments:
+                        await process_amendment(amendment)
+                else:
+                    logger.info("No amendments to process for bill %s%s", bill_type, bill_number)
+                
             except Exception as e:
-                logger.error("Error processing bill %d/%d: %s",
-                           i, len(bills), str(e))
+                logger.error("Error processing bill %d/%d: %s", i, len(bills), str(e))
         
-        # Process amendments
-        for i, amendment in enumerate(amendments, 1):
-            try:
-                # The amendment structure might be different than expected
-                amendment_info = amendment if isinstance(amendment, dict) else {}
-                congress = amendment_info.get("congress")
-                amendment_type = amendment_info.get("type")
-                amendment_number = amendment_info.get("number")
-                
-                if not all([congress, amendment_type, amendment_number]):
-                    logger.warning("Skipping amendment %d/%d due to missing required fields",
-                                 i, len(amendments))
-                    continue
-                
-                logger.info("Processing amendment %d of %d (%s%s)",
-                          i, len(amendments), amendment_type, amendment_number)
-                await process_amendment(amendment_info)
-            except Exception as e:
-                logger.error("Error processing amendment %d/%d: %s",
-                           i, len(amendments), str(e))
-            
         logger.info("Successfully completed Congress data update")
             
     except Exception as e:

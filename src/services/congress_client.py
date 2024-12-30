@@ -1,8 +1,9 @@
 import os
 import logging
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import requests
+from requests.exceptions import HTTPError
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +60,57 @@ class CongressClient:
         logger.info("Fetching details for bill %s%d in Congress %d", bill_type, bill_number, congress)
         return self._make_request(f"bill/{congress}/{bill_type}/{bill_number}")
 
-    def get_bill_amendments(self, congress: int, bill_type: str, bill_number: int) -> Dict:
-        """Get amendments for a specific bill."""
-        logger.info("Fetching amendments for bill %s%d in Congress %d", bill_type, bill_number, congress)
-        return self._make_request(f"bill/{congress}/{bill_type}/{bill_number}/amendments")
+    def get_bill_amendments(self, congress: int, bill_type: str, bill_number: str) -> Optional[List[Dict]]:
+        """Fetch all amendments for a specific bill."""
+        logger.info("Fetching amendments for bill %s%s in Congress %d", bill_type, bill_number, congress)
+        # First, fetch the bill details to get amendment links or identifiers
+        bill_endpoint = f"bill/{congress}/{bill_type.lower()}/{bill_number}"
+        try:
+            bill_response = self._make_request(bill_endpoint)
+            bill_data = bill_response.get("bill", {})
+            amendments = bill_data.get("amendments", [])
+            
+            if not amendments:
+                logger.info("No amendments found for bill %s%s in Congress %d", bill_type, bill_number, congress)
+                return []
+
+            amendment_details = []
+            for amendment in amendments:
+                amendment_type = amendment.get("type")
+                amendment_number = amendment.get("number")
+                if not (amendment_type and amendment_number):
+                    logger.warning("Amendment missing type or number: %s", amendment)
+                    continue
+                amendment_endpoint = f"amendment/{congress}/{amendment_type}/{amendment_number}"
+                try:
+                    amendment_response = self._make_request(amendment_endpoint)
+                    amendment_data = amendment_response.get("amendment", {})
+                    amendment_details.append(amendment_data)
+                except HTTPError as http_err:
+                    if http_err.response.status_code == 404:
+                        logger.warning("Amendment %s%s not found in Congress %d", amendment_type, amendment_number, congress)
+                        continue
+                    else:
+                        logger.error("HTTP error occurred while fetching amendment %s%s: %s",
+                                     amendment_type, amendment_number, http_err)
+                        continue
+                except Exception as err:
+                    logger.error("An error occurred while fetching amendment %s%s: %s",
+                                 amendment_type, amendment_number, err)
+                    continue
+
+            return amendment_details
+
+        except HTTPError as http_err:
+            if http_err.response.status_code == 404:
+                logger.warning("Bill %s%s not found in Congress %d", bill_type, bill_number, congress)
+                return None
+            else:
+                logger.error("HTTP error occurred while fetching bill %s%s: %s", bill_type, bill_number, http_err)
+                return None
+        except Exception as err:
+            logger.error("An error occurred while fetching bill %s%s: %s", bill_type, bill_number, err)
+            return None
 
     def get_amendment_details(self, congress: int, amendment_type: str, amendment_number: int) -> Dict:
         """Get detailed information about a specific amendment."""
