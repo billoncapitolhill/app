@@ -192,19 +192,20 @@ async def update_congress_data() -> None:
         logger.info("Fetching recent bills from the 118th Congress")
         
         response = congress_client.get_recent_bills(118, limit=50)
-        bills = response.get("bills", {}).get("bill", [])
-        amendments = []
-        
         logger.debug("Raw API response: %s", response)
+        
+        # The response structure is different than expected
+        # It returns a list directly under 'bills'
+        bills = response.get("bills", []) if isinstance(response.get("bills"), list) else []
+        amendments = []
         
         # For each bill, get its amendments if we have the required fields
         for bill in bills:
             try:
-                # Extract bill information from the nested structure
-                bill_info = bill.get("bill", {})
-                congress = bill_info.get("congress")
-                bill_type = bill_info.get("type")
-                bill_number = bill_info.get("number")
+                # Extract bill information
+                congress = bill.get("congress")
+                bill_type = bill.get("type")
+                bill_number = bill.get("number")
                 
                 if not all([congress, bill_type, bill_number]):
                     logger.warning("Skipping bill due to missing required fields: congress=%s, type=%s, number=%s",
@@ -214,15 +215,21 @@ async def update_congress_data() -> None:
                 logger.info("Fetching amendments for bill %s%s from Congress %s",
                           bill_type, bill_number, congress)
                 
-                bill_amendments = congress_client.get_bill_amendments(
+                amendment_response = congress_client.get_bill_amendments(
                     congress,
                     bill_type,
                     bill_number
-                ).get("amendments", {}).get("amendment", [])
+                )
                 
-                amendments.extend(bill_amendments)
+                # Handle the amendments response structure
+                bill_amendments = amendment_response.get("amendments", [])
+                if isinstance(bill_amendments, dict):
+                    bill_amendments = bill_amendments.get("amendment", [])
+                
+                amendments.extend(bill_amendments if isinstance(bill_amendments, list) else [])
                 logger.info("Found %d amendments for bill %s%s",
-                          len(bill_amendments), bill_type, bill_number)
+                          len(bill_amendments) if isinstance(bill_amendments, list) else 0,
+                          bill_type, bill_number)
                 
             except Exception as e:
                 logger.error("Error fetching amendments for bill: %s", str(e))
@@ -233,10 +240,9 @@ async def update_congress_data() -> None:
         # Process bills
         for i, bill in enumerate(bills, 1):
             try:
-                bill_info = bill.get("bill", {})
-                congress = bill_info.get("congress")
-                bill_type = bill_info.get("type")
-                bill_number = bill_info.get("number")
+                congress = bill.get("congress")
+                bill_type = bill.get("type")
+                bill_number = bill.get("number")
                 
                 if not all([congress, bill_type, bill_number]):
                     logger.warning("Skipping bill %d/%d due to missing required fields",
@@ -245,7 +251,7 @@ async def update_congress_data() -> None:
                 
                 logger.info("Processing bill %d of %d (%s%s)",
                           i, len(bills), bill_type, bill_number)
-                await process_bill(bill_info)
+                await process_bill(bill)
             except Exception as e:
                 logger.error("Error processing bill %d/%d: %s",
                            i, len(bills), str(e))
@@ -253,7 +259,8 @@ async def update_congress_data() -> None:
         # Process amendments
         for i, amendment in enumerate(amendments, 1):
             try:
-                amendment_info = amendment.get("amendment", {})
+                # The amendment structure might be different than expected
+                amendment_info = amendment if isinstance(amendment, dict) else {}
                 congress = amendment_info.get("congress")
                 amendment_type = amendment_info.get("type")
                 amendment_number = amendment_info.get("number")
