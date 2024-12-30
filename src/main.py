@@ -146,8 +146,18 @@ async def update_congress_data() -> None:
 
 def run_async_job():
     """Helper function to run async job in the event loop."""
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(update_congress_data())
+    try:
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Run the coroutine
+        loop.run_until_complete(update_congress_data())
+        
+        # Clean up
+        loop.close()
+    except Exception as e:
+        logger.error(f"Error in scheduler job: {str(e)}")
 
 # Schedule daily updates
 scheduler.add_job(
