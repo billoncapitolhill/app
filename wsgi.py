@@ -24,8 +24,8 @@ except Exception as e:
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        "wsgi:app",
-        host=os.getenv("HOST", "0.0.0.0"),
+        "src.main:app",
+        host="0.0.0.0",
         port=int(os.getenv("PORT", 8000)),
-        reload=bool(os.getenv("DEBUG", False))
+        log_level="debug"
     ) 
