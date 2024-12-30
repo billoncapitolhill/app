@@ -14,6 +14,9 @@ def get_db_connection():
         # Log the parsed components for debugging
         logger.debug(f"Parsed DB URL: {db_url}")
 
+        # Log the connection parameters
+        logger.debug(f"Connecting with dbname={db_url.path[1:]}, user={db_url.username}, host={db_url.hostname}, port={db_url.port}")
+
         # Create connection with only the necessary arguments
         conn = psycopg2.connect(
             dbname=db_url.path[1:],  # Remove leading slash
