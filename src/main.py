@@ -162,8 +162,8 @@ async def update_congress_data() -> None:
     """Update bills and amendments from Congress.gov."""
     try:
         # Get updates from the last 24 hours
-        since_date = datetime.utcnow() - timedelta(days=1)
-        logger.info("Fetching updates since %s", since_date.strftime("%Y-%m-%d"))
+        since_date = datetime.utcnow().replace(microsecond=0) - timedelta(days=1)
+        logger.info("Fetching updates since %s UTC", since_date.strftime("%Y-%m-%dT%H:%M:%SZ"))
         
         updates = congress_client.get_updates_since(since_date)
         logger.info("Received %d bills and %d amendments to process",

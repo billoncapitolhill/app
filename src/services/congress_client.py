@@ -71,6 +71,6 @@ class CongressClient:
 
     def get_updates_since(self, since_date: datetime) -> Dict:
         """Get bills and amendments updated since a specific date."""
-        formatted_date = since_date.strftime("%Y-%m-%d")
+        formatted_date = since_date.strftime("%Y-%m-%dT%H:%M:%SZ")
         logger.info("Fetching updates since %s", formatted_date)
         return self._make_request("bill", {"fromDateTime": formatted_date}) 
