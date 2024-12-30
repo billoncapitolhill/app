@@ -1,24 +1,35 @@
 import os
+import logging
+import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, List
 
 from fastapi import FastAPI, HTTPException
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.services.congress_client import CongressClient
 from src.services.ai_summarizer import AISummarizer
 from src.services.database import DatabaseService
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="Congress Bill Analysis Platform")
 
 # Initialize services
-congress_client = CongressClient()
-ai_summarizer = AISummarizer()
-db_service = DatabaseService()
+try:
+    congress_client = CongressClient()
+    ai_summarizer = AISummarizer()
+    db_service = DatabaseService()
+    logger.info("Successfully initialized all services")
+except Exception as e:
+    logger.error(f"Failed to initialize services: {str(e)}")
+    raise
 
 # Initialize scheduler
-scheduler = BackgroundScheduler()
+scheduler = AsyncIOScheduler()
 
 async def process_bill(bill_data: Dict) -> None:
     """Process a bill and generate AI summary."""
@@ -48,8 +59,10 @@ async def process_bill(bill_data: Dict) -> None:
             "status": "completed",
             "last_processed": datetime.utcnow()
         })
+        logger.info(f"Successfully processed bill {bill_data['bill_type']}{bill_data['bill_number']}")
         
     except Exception as e:
+        logger.error(f"Error processing bill: {str(e)}")
         db_service.update_processing_status({
             "target_id": bill_data["id"],
             "target_type": "bill",
@@ -100,8 +113,10 @@ async def process_amendment(amendment_data: Dict) -> None:
             "status": "completed",
             "last_processed": datetime.utcnow()
         })
+        logger.info(f"Successfully processed amendment {amendment_data['amendment_type']}{amendment_data['amendment_number']}")
         
     except Exception as e:
+        logger.error(f"Error processing amendment: {str(e)}")
         db_service.update_processing_status({
             "target_id": amendment_data["id"],
             "target_type": "amendment",
@@ -124,13 +139,19 @@ async def update_congress_data() -> None:
         # Process amendments
         for amendment in updates.get("amendments", []):
             await process_amendment(amendment)
+        logger.info("Successfully completed Congress data update")
             
     except Exception as e:
-        print(f"Error updating Congress data: {str(e)}")
+        logger.error(f"Error updating Congress data: {str(e)}")
+
+def run_async_job():
+    """Helper function to run async job in the event loop."""
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(update_congress_data())
 
 # Schedule daily updates
 scheduler.add_job(
-    update_congress_data,
+    run_async_job,
     trigger=IntervalTrigger(hours=24),
     next_run_time=datetime.now()
 )
@@ -138,12 +159,21 @@ scheduler.add_job(
 @app.on_event("startup")
 async def startup_event():
     """Start the scheduler on application startup."""
-    scheduler.start()
+    try:
+        scheduler.start()
+        logger.info("Successfully started scheduler")
+    except Exception as e:
+        logger.error(f"Failed to start scheduler: {str(e)}")
+        raise
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Shut down the scheduler on application shutdown."""
-    scheduler.shutdown()
+    try:
+        scheduler.shutdown()
+        logger.info("Successfully shut down scheduler")
+    except Exception as e:
+        logger.error(f"Error shutting down scheduler: {str(e)}")
 
 @app.get("/bills/{congress}/{bill_type}/{bill_number}")
 async def get_bill(congress: int, bill_type: str, bill_number: int):
@@ -151,6 +181,7 @@ async def get_bill(congress: int, bill_type: str, bill_number: int):
     try:
         return db_service.get_bill_with_summaries(congress, bill_type, bill_number)
     except Exception as e:
+        logger.error(f"Error getting bill: {str(e)}")
         raise HTTPException(status_code=404, detail=str(e))
 
 @app.get("/amendments/{congress}/{amendment_type}/{amendment_number}")
@@ -159,6 +190,7 @@ async def get_amendment(congress: int, amendment_type: str, amendment_number: in
     try:
         return db_service.get_amendment_with_summaries(congress, amendment_type, amendment_number)
     except Exception as e:
+        logger.error(f"Error getting amendment: {str(e)}")
         raise HTTPException(status_code=404, detail=str(e))
 
 @app.get("/summaries/recent")
@@ -167,6 +199,7 @@ async def get_recent_summaries(limit: int = 10):
     try:
         return db_service.get_recent_summaries(limit)
     except Exception as e:
+        logger.error(f"Error getting recent summaries: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/status/errors")
@@ -175,4 +208,5 @@ async def get_processing_errors():
     try:
         return db_service.get_processing_errors()
     except Exception as e:
+        logger.error(f"Error getting processing errors: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e)) 

@@ -7,7 +7,10 @@ WORKDIR /app
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    PORT=8000 \
+    HOST=0.0.0.0 \
+    WORKERS=4
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -29,7 +32,14 @@ RUN useradd -m -u 1000 appuser && \
 USER appuser
 
 # Expose port
-EXPOSE 8000
+EXPOSE $PORT
 
-# Start the application
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"] 
+# Start the application with gunicorn
+CMD gunicorn wsgi:app \
+    --bind $HOST:$PORT \
+    --workers $WORKERS \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --timeout 120 \
+    --access-logfile - \
+    --error-logfile - \
+    --log-level info 
