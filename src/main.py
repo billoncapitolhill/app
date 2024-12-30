@@ -207,20 +207,31 @@ async def update_congress_data() -> None:
                 congress = bill.get("congress")
                 bill_type = bill.get("type")
                 bill_number = bill.get("number")
-                bill_id = bill.get("id")
                 
-                if not all([congress, bill_type, bill_number, bill_id]):
-                    logger.error("Missing required fields for bill: congress=%s, type=%s, number=%s, id=%s",
-                               congress, bill_type, bill_number, bill_id)
+                if not all([congress, bill_type, bill_number]):
+                    logger.error("Missing required fields for bill: congress=%s, type=%s, number=%s",
+                               congress, bill_type, bill_number)
                     continue
                 
+                # Generate a consistent bill ID format
+                bill_id = f"{congress}-{bill_type}-{bill_number}"
+                
                 logger.info("Processing bill %d of %d (%s%s)", i, len(bills), bill_type, bill_number)
+                
+                # Add the generated bill_id to the bill data
+                bill["billId"] = bill_id
                 await process_bill(bill)
                 
                 # Fetch and process amendments for this bill
                 amendment_response = congress_client.get_bill_amendments(congress, bill_type, bill_number)
                 if amendment_response:
                     for amendment in amendment_response:
+                        # Generate amendment ID if needed
+                        if amendment and "amendmentId" not in amendment:
+                            amendment_type = amendment.get("type")
+                            amendment_number = amendment.get("number")
+                            if amendment_type and amendment_number:
+                                amendment["amendmentId"] = f"{congress}-{amendment_type}-{amendment_number}"
                         await process_amendment(amendment)
                 else:
                     logger.info("No amendments to process for bill %s%s", bill_type, bill_number)
