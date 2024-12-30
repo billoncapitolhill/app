@@ -34,129 +34,156 @@ scheduler = AsyncIOScheduler()
 async def process_bill(bill_data: Dict) -> None:
     """Process a bill and generate AI summary."""
     try:
+        congress = bill_data.get("congress")
+        bill_type = bill_data.get("type")
+        bill_number = bill_data.get("number")
+        bill_id = bill_data.get("billId")
+        
+        if not all([congress, bill_type, bill_number, bill_id]):
+            logger.error("Missing required fields for bill: congress=%s, type=%s, number=%s, id=%s",
+                        congress, bill_type, bill_number, bill_id)
+            return
+        
         logger.info("Starting to process bill %s%s from Congress %s", 
-                   bill_data.get("bill_type"), bill_data.get("bill_number"), bill_data.get("congress"))
+                   bill_type, bill_number, congress)
         
         # Get detailed bill information
         logger.info("Fetching detailed information for bill %s%s", 
-                   bill_data.get("bill_type"), bill_data.get("bill_number"))
+                   bill_type, bill_number)
         bill_details = congress_client.get_bill_details(
-            bill_data["congress"],
-            bill_data["bill_type"],
-            bill_data["bill_number"]
-        )
+            congress,
+            bill_type,
+            bill_number
+        ).get("bill", {})
+        
+        if not bill_details:
+            logger.error("Failed to get details for bill %s%s", bill_type, bill_number)
+            return
         
         # Generate AI summary
         logger.info("Generating AI summary for bill %s%s", 
-                   bill_data.get("bill_type"), bill_data.get("bill_number"))
-        summary = ai_summarizer.summarize_bill(bill_details["text"])
+                   bill_type, bill_number)
+        summary = ai_summarizer.summarize_bill(bill_details.get("text", ""))
         
         # Update database
         logger.info("Updating database with bill %s%s and its summary", 
-                   bill_data.get("bill_type"), bill_data.get("bill_number"))
+                   bill_type, bill_number)
         db_service.upsert_bill(bill_details)
         db_service.upsert_ai_summary({
-            "target_id": bill_details["id"],
+            "target_id": bill_id,
             "target_type": "bill",
             **summary
         })
         
         # Update processing status
         logger.info("Updating processing status for bill %s%s", 
-                   bill_data.get("bill_type"), bill_data.get("bill_number"))
+                   bill_type, bill_number)
         db_service.update_processing_status({
-            "target_id": bill_details["id"],
+            "target_id": bill_id,
             "target_type": "bill",
             "status": "completed",
             "last_processed": datetime.utcnow()
         })
         logger.info("Successfully processed bill %s%s", 
-                   bill_data.get("bill_type"), bill_data.get("bill_number"))
+                   bill_type, bill_number)
         
     except Exception as e:
-        logger.error("Error processing bill %s%s: %s", 
-                    bill_data.get("bill_type"), bill_data.get("bill_number"), str(e))
-        db_service.update_processing_status({
-            "target_id": bill_data["id"],
-            "target_type": "bill",
-            "status": "error",
-            "error_message": str(e),
-            "last_processed": datetime.utcnow()
-        })
+        logger.error("Error processing bill: %s", str(e))
+        if bill_id:
+            db_service.update_processing_status({
+                "target_id": bill_id,
+                "target_type": "bill",
+                "status": "error",
+                "error_message": str(e),
+                "last_processed": datetime.utcnow()
+            })
 
 async def process_amendment(amendment_data: Dict) -> None:
     """Process an amendment and generate AI summary."""
     try:
+        congress = amendment_data.get("congress")
+        amendment_type = amendment_data.get("type")
+        amendment_number = amendment_data.get("number")
+        amendment_id = amendment_data.get("amendmentId")
+        associated_bill = amendment_data.get("associatedBill", {})
+        
+        if not all([congress, amendment_type, amendment_number, amendment_id]):
+            logger.error("Missing required fields for amendment: congress=%s, type=%s, number=%s, id=%s",
+                        congress, amendment_type, amendment_number, amendment_id)
+            return
+        
         logger.info("Starting to process amendment %s%s from Congress %s",
-                   amendment_data.get("amendment_type"), amendment_data.get("amendment_number"),
-                   amendment_data.get("congress"))
+                   amendment_type, amendment_number, congress)
         
         # Get detailed amendment information
         logger.info("Fetching detailed information for amendment %s%s",
-                   amendment_data.get("amendment_type"), amendment_data.get("amendment_number"))
+                   amendment_type, amendment_number)
         amendment_details = congress_client.get_amendment_details(
-            amendment_data["congress"],
-            amendment_data["amendment_type"],
-            amendment_data["amendment_number"]
-        )
+            congress,
+            amendment_type,
+            amendment_number
+        ).get("amendment", {})
+        
+        if not amendment_details:
+            logger.error("Failed to get details for amendment %s%s", amendment_type, amendment_number)
+            return
         
         # Get associated bill if available
         bill_details = None
-        if amendment_data.get("bill_id"):
+        if associated_bill:
             logger.info("Fetching associated bill details for amendment %s%s",
-                       amendment_data.get("amendment_type"), amendment_data.get("amendment_number"))
+                       amendment_type, amendment_number)
             bill = db_service.get_bill_with_summaries(
-                amendment_data["congress"],
-                amendment_data["bill_type"],
-                amendment_data["bill_number"]
+                associated_bill.get("congress"),
+                associated_bill.get("type"),
+                associated_bill.get("number")
             )
             if bill:
-                bill_details = bill["text"]
+                bill_details = bill.get("text")
                 logger.info("Found associated bill %s%s for amendment %s%s",
-                           amendment_data.get("bill_type"), amendment_data.get("bill_number"),
-                           amendment_data.get("amendment_type"), amendment_data.get("amendment_number"))
+                           associated_bill.get("type"), associated_bill.get("number"),
+                           amendment_type, amendment_number)
         
         # Generate AI summary
         logger.info("Generating AI summary for amendment %s%s",
-                   amendment_data.get("amendment_type"), amendment_data.get("amendment_number"))
+                   amendment_type, amendment_number)
         summary = ai_summarizer.summarize_amendment(
-            amendment_details["text"],
+            amendment_details.get("text", ""),
             bill_details
         )
         
         # Update database
         logger.info("Updating database with amendment %s%s and its summary",
-                   amendment_data.get("amendment_type"), amendment_data.get("amendment_number"))
+                   amendment_type, amendment_number)
         db_service.upsert_amendment(amendment_details)
         db_service.upsert_ai_summary({
-            "target_id": amendment_details["id"],
+            "target_id": amendment_id,
             "target_type": "amendment",
             **summary
         })
         
         # Update processing status
         logger.info("Updating processing status for amendment %s%s",
-                   amendment_data.get("amendment_type"), amendment_data.get("amendment_number"))
+                   amendment_type, amendment_number)
         db_service.update_processing_status({
-            "target_id": amendment_details["id"],
+            "target_id": amendment_id,
             "target_type": "amendment",
             "status": "completed",
             "last_processed": datetime.utcnow()
         })
         logger.info("Successfully processed amendment %s%s",
-                   amendment_data.get("amendment_type"), amendment_data.get("amendment_number"))
+                   amendment_type, amendment_number)
         
     except Exception as e:
-        logger.error("Error processing amendment %s%s: %s",
-                    amendment_data.get("amendment_type"), amendment_data.get("amendment_number"),
-                    str(e))
-        db_service.update_processing_status({
-            "target_id": amendment_data["id"],
-            "target_type": "amendment",
-            "status": "error",
-            "error_message": str(e),
-            "last_processed": datetime.utcnow()
-        })
+        logger.error("Error processing amendment: %s", str(e))
+        if amendment_id:
+            db_service.update_processing_status({
+                "target_id": amendment_id,
+                "target_type": "amendment",
+                "status": "error",
+                "error_message": str(e),
+                "last_processed": datetime.utcnow()
+            })
 
 async def update_congress_data() -> None:
     """Update bills and amendments from Congress.gov."""
@@ -164,35 +191,84 @@ async def update_congress_data() -> None:
         # Get recent bills from the current Congress (118th)
         logger.info("Fetching recent bills from the 118th Congress")
         
-        updates = congress_client.get_recent_bills(118, limit=50)
-        bills = updates.get("bills", [])
+        response = congress_client.get_recent_bills(118, limit=50)
+        bills = response.get("bills", {}).get("bill", [])
         amendments = []
         
-        # For each bill, get its amendments
+        logger.debug("Raw API response: %s", response)
+        
+        # For each bill, get its amendments if we have the required fields
         for bill in bills:
             try:
+                # Extract bill information from the nested structure
+                bill_info = bill.get("bill", {})
+                congress = bill_info.get("congress")
+                bill_type = bill_info.get("type")
+                bill_number = bill_info.get("number")
+                
+                if not all([congress, bill_type, bill_number]):
+                    logger.warning("Skipping bill due to missing required fields: congress=%s, type=%s, number=%s",
+                                 congress, bill_type, bill_number)
+                    continue
+                
+                logger.info("Fetching amendments for bill %s%s from Congress %s",
+                          bill_type, bill_number, congress)
+                
                 bill_amendments = congress_client.get_bill_amendments(
-                    bill["congress"],
-                    bill["bill_type"],
-                    bill["bill_number"]
-                ).get("amendments", [])
+                    congress,
+                    bill_type,
+                    bill_number
+                ).get("amendments", {}).get("amendment", [])
+                
                 amendments.extend(bill_amendments)
+                logger.info("Found %d amendments for bill %s%s",
+                          len(bill_amendments), bill_type, bill_number)
+                
             except Exception as e:
-                logger.error("Error fetching amendments for bill %s%s: %s",
-                           bill.get("bill_type"), bill.get("bill_number"), str(e))
+                logger.error("Error fetching amendments for bill: %s", str(e))
         
         logger.info("Received %d bills and %d amendments to process",
                    len(bills), len(amendments))
         
         # Process bills
         for i, bill in enumerate(bills, 1):
-            logger.info("Processing bill %d of %d", i, len(bills))
-            await process_bill(bill)
+            try:
+                bill_info = bill.get("bill", {})
+                congress = bill_info.get("congress")
+                bill_type = bill_info.get("type")
+                bill_number = bill_info.get("number")
+                
+                if not all([congress, bill_type, bill_number]):
+                    logger.warning("Skipping bill %d/%d due to missing required fields",
+                                 i, len(bills))
+                    continue
+                
+                logger.info("Processing bill %d of %d (%s%s)",
+                          i, len(bills), bill_type, bill_number)
+                await process_bill(bill_info)
+            except Exception as e:
+                logger.error("Error processing bill %d/%d: %s",
+                           i, len(bills), str(e))
         
         # Process amendments
         for i, amendment in enumerate(amendments, 1):
-            logger.info("Processing amendment %d of %d", i, len(amendments))
-            await process_amendment(amendment)
+            try:
+                amendment_info = amendment.get("amendment", {})
+                congress = amendment_info.get("congress")
+                amendment_type = amendment_info.get("type")
+                amendment_number = amendment_info.get("number")
+                
+                if not all([congress, amendment_type, amendment_number]):
+                    logger.warning("Skipping amendment %d/%d due to missing required fields",
+                                 i, len(amendments))
+                    continue
+                
+                logger.info("Processing amendment %d of %d (%s%s)",
+                          i, len(amendments), amendment_type, amendment_number)
+                await process_amendment(amendment_info)
+            except Exception as e:
+                logger.error("Error processing amendment %d/%d: %s",
+                           i, len(amendments), str(e))
             
         logger.info("Successfully completed Congress data update")
             
