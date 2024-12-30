@@ -1,12 +1,9 @@
 import os
-from datetime import datetime
-from typing import Dict, List, Optional, Union
 import logging
-
-from supabase import Client, create_client
-
-from src.models.congress import Amendment, Bill
-from src.models.ai import AISummary, ProcessingStatus
+from datetime import datetime
+from typing import Dict, Optional, List
+import json
+from supabase import create_client, Client
 
 logger = logging.getLogger(__name__)
 
@@ -14,50 +11,69 @@ class DatabaseService:
     """Service for interacting with the Supabase database."""
 
     def __init__(self, url: str = None, key: str = None):
-        try:
-            self.url = url or os.getenv("SUPABASE_URL")
-            self.key = key or os.getenv("SUPABASE_KEY")
-            
-            if not self.url or not self.key:
-                logger.error("Supabase URL and key are required")
-                raise ValueError("Supabase URL and key are required")
-            
-            self.client: Client = create_client(self.url, self.key)
-            logger.info(f"Successfully connected to Supabase at {self.url}")
-        except Exception as e:
-            logger.error(f"Failed to initialize Supabase client: {str(e)}")
-            raise
+        self.url = url or os.getenv("SUPABASE_URL")
+        self.key = key or os.getenv("SUPABASE_KEY")
+        
+        if not all([self.url, self.key]):
+            logger.error("Supabase URL and key are required")
+            raise ValueError("Supabase URL and key are required")
+        
+        self.client = create_client(self.url, self.key)
+        logger.info("Successfully connected to Supabase at %s", self.url)
 
-    def upsert_bill(self, bill_data: Dict) -> Dict:
+    def _serialize_datetime(self, obj: Dict) -> Dict:
+        """Convert datetime objects to ISO format strings."""
+        for key, value in obj.items():
+            if isinstance(value, datetime):
+                obj[key] = value.isoformat()
+            elif isinstance(value, dict):
+                obj[key] = self._serialize_datetime(value)
+            elif isinstance(value, list):
+                obj[key] = [self._serialize_datetime(item) if isinstance(item, dict) else item for item in value]
+        return obj
+
+    def upsert_bill(self, bill_data: Dict) -> None:
         """Insert or update a bill in the database."""
         try:
-            return self.client.table("bills").upsert(bill_data).execute()
+            # Serialize datetime objects before sending to Supabase
+            bill_data = self._serialize_datetime(bill_data)
+            self.client.table("bills").upsert(bill_data).execute()
+            logger.info("Successfully upserted bill %s", bill_data.get("billId"))
         except Exception as e:
-            logger.error(f"Error upserting bill: {str(e)}")
+            logger.error("Error upserting bill: %s", str(e))
             raise
 
-    def upsert_amendment(self, amendment_data: Dict) -> Dict:
+    def upsert_amendment(self, amendment_data: Dict) -> None:
         """Insert or update an amendment in the database."""
         try:
-            return self.client.table("amendments").upsert(amendment_data).execute()
+            # Serialize datetime objects before sending to Supabase
+            amendment_data = self._serialize_datetime(amendment_data)
+            self.client.table("amendments").upsert(amendment_data).execute()
+            logger.info("Successfully upserted amendment %s", amendment_data.get("amendmentId"))
         except Exception as e:
-            logger.error(f"Error upserting amendment: {str(e)}")
+            logger.error("Error upserting amendment: %s", str(e))
             raise
 
-    def upsert_ai_summary(self, summary_data: Dict) -> Dict:
+    def upsert_ai_summary(self, summary_data: Dict) -> None:
         """Insert or update an AI summary in the database."""
         try:
-            return self.client.table("ai_summaries").upsert(summary_data).execute()
+            # Serialize datetime objects before sending to Supabase
+            summary_data = self._serialize_datetime(summary_data)
+            self.client.table("ai_summaries").upsert(summary_data).execute()
+            logger.info("Successfully upserted AI summary for %s", summary_data.get("target_id"))
         except Exception as e:
-            logger.error(f"Error upserting AI summary: {str(e)}")
+            logger.error("Error upserting AI summary: %s", str(e))
             raise
 
-    def update_processing_status(self, status_data: Dict) -> Dict:
+    def update_processing_status(self, status_data: Dict) -> None:
         """Update the processing status of a bill or amendment."""
         try:
-            return self.client.table("processing_status").upsert(status_data).execute()
+            # Serialize datetime objects before sending to Supabase
+            status_data = self._serialize_datetime(status_data)
+            self.client.table("processing_status").upsert(status_data).execute()
+            logger.info("Successfully updated processing status for %s", status_data.get("target_id"))
         except Exception as e:
-            logger.error(f"Error updating processing status: {str(e)}")
+            logger.error("Error updating processing status: %s", str(e))
             raise
 
     def get_bills_for_processing(self, limit: int = 100) -> List[Dict]:

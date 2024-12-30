@@ -55,9 +55,9 @@ class CongressClient:
         logger.info("Fetching recent bills for Congress %d with limit %d", congress, limit)
         return self._make_request(f"bill/{congress}", {"limit": limit})
 
-    def get_bill_details(self, congress: int, bill_type: str, bill_number: int) -> Dict:
+    def get_bill_details(self, congress: int, bill_type: str, bill_number: str) -> Dict:
         """Get detailed information about a specific bill."""
-        logger.info("Fetching details for bill %s%d in Congress %d", bill_type, bill_number, congress)
+        logger.info("Fetching details for bill %s%s in Congress %d", bill_type, bill_number, congress)
         return self._make_request(f"bill/{congress}/{bill_type}/{bill_number}")
 
     def get_bill_amendments(self, congress: int, bill_type: str, bill_number: str) -> List[Dict]:
