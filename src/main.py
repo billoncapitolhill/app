@@ -38,7 +38,9 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "https://orca-app-nkgpg.ondigitalocean.app",
-        "https://www.orca-app-nkgpg.ondigitalocean.app"
+        "https://www.orca-app-nkgpg.ondigitalocean.app",
+        "https://thebilloncapitolhill.com",
+        "https://www.thebilloncapitolhill.com"
     ],
     allow_credentials=True,
     allow_methods=["*"],
