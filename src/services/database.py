@@ -73,19 +73,30 @@ class DatabaseService:
             target_type = summary_data.get("target_type")
             target_id = summary_data.get("target_id")
             
-            if target_type == "bill":
-                target = self.client.table("bills").select("id").eq("id", target_id).single().execute()
-            else:  # target_type == "amendment"
-                target = self.client.table("amendments").select("id").eq("id", target_id).single().execute()
+            if not target_type or not target_id:
+                raise ValueError("Missing target_type or target_id in summary data")
             
-            if not target.data:
-                raise Exception(f"Target {target_type} with ID {target_id} not found")
+            # Validate target exists before attempting to create summary
+            try:
+                if target_type == "bill":
+                    target = self.client.table("bills").select("id").eq("id", target_id).single().execute()
+                elif target_type == "amendment":
+                    target = self.client.table("amendments").select("id").eq("id", target_id).single().execute()
+                else:
+                    raise ValueError(f"Invalid target_type: {target_type}")
+                
+                if not target.data:
+                    raise ValueError(f"Target {target_type} with ID {target_id} does not exist in the database")
+            except Exception as e:
+                logger.error(f"Error validating {target_type} existence: {str(e)}")
+                raise ValueError(f"Failed to validate {target_type} existence: {str(e)}")
             
             # Then, insert/update the AI summary
             result = self.client.table("ai_summaries").upsert(
                 summary_data,
                 on_conflict="target_id,target_type"
             ).execute()
+            
             if result.data:
                 logger.info("Successfully upserted AI summary for %s %s", target_type, target_id)
                 return result.data[0]

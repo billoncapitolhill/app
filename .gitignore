@@ -1,6 +1,7 @@
 # Environment variables
 .env
 .env.*
+!.env.example
 
 # Python
 __pycache__/
@@ -26,6 +27,8 @@ wheels/
 MANIFEST
 venv/
 .venv/
+.python-version  # pyenv
+poetry.lock     # poetry
 
 # IDE
 .idea/
@@ -33,11 +36,14 @@ venv/
 *.swp
 *.swo
 .DS_Store
+*.code-workspace
+.history/
 
 # Logs
 *.log
 logs/
 log/
+app.log
 
 # Testing
 .coverage
@@ -47,6 +53,9 @@ htmlcov/
 coverage.xml
 *.cover
 .hypothesis/
+.nox/
+nosetests.xml
+coverage/
 
 # Database
 *.sqlite3
@@ -57,6 +66,8 @@ coverage.xml
 *.bak
 *.swp
 *~
+*.save
+*.autosave
 
 # Local development
 .local/
@@ -65,3 +76,18 @@ test_db_connection.py
 setup_database.py
 apply_migration.py
 apply_schema.py
+check_schema.py
+check_db.py
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Misc
+*.pem
+*.key
+*.cert
+.env.prod
+.env.staging
+.env.dev
+node_modules/

@@ -127,32 +127,6 @@ async def process_bills():
             
             for bill in bills:
                 try:
-                    # Check if we already have an AI summary for this bill
-                    try:
-                        existing_bill = db_service.get_bill_with_summaries(
-                            congress=bill["congress"],
-                            bill_type=bill["type"],
-                            bill_number=bill["number"]
-                        )
-                    except Exception as e:
-                        logger.error(f"Error checking existing bill {bill.get('type')}{bill.get('number')}: {str(e)}\n{traceback.format_exc()}")
-                        continue
-
-                    # Check if bill already has a summary and hasn't been updated
-                    if existing_bill and existing_bill.get("ai_summaries"):
-                        try:
-                            bill_update_date = ensure_utc_datetime(bill.get("updateDate"))
-                            summary_date = ensure_utc_datetime(existing_bill["ai_summaries"][0]["created_at"])
-                            
-                            if bill_update_date <= summary_date:
-                                logger.info(f"Bill {bill['type']}{bill['number']} already has up-to-date AI summary")
-                                continue
-                            else:
-                                logger.info(f"Bill {bill['type']}{bill['number']} has been updated, generating new summary")
-                        except Exception as e:
-                            logger.error(f"Error comparing dates for bill {bill.get('type')}{bill.get('number')}: {str(e)}\n{traceback.format_exc()}")
-                            continue
-
                     # Get detailed bill information
                     try:
                         bill_details = congress_client.get_bill_details(
@@ -186,18 +160,61 @@ async def process_bills():
                         if not stored_bill:
                             logger.error(f"Failed to store bill {bill['type']}{bill['number']}")
                             continue
+                            
+                        # Process amendments if they exist
+                        if bill_details.get("amendments"):
+                            for amendment in bill_details["amendments"]:
+                                try:
+                                    amendment_data = {
+                                        "bill_id": stored_bill["id"],
+                                        "congress_number": amendment.get("congress"),
+                                        "amendment_type": amendment.get("type"),
+                                        "amendment_number": int(amendment.get("number")),
+                                        "description": amendment.get("description", ""),
+                                        "purpose": amendment.get("purpose", ""),
+                                        "submitted_date": amendment.get("submittedDate"),
+                                        "latest_action_date": amendment.get("latestAction", {}).get("actionDate"),
+                                        "latest_action_text": amendment.get("latestAction", {}).get("text"),
+                                        "chamber": amendment.get("chamber"),
+                                        "url": amendment.get("url")
+                                    }
+                                    
+                                    stored_amendment = db_service.upsert_amendment(amendment_data)
+                                    if stored_amendment:
+                                        # Generate and store amendment summary
+                                        try:
+                                            amendment_summary = await ai_service.generate_amendment_summary(amendment)
+                                            if amendment_summary:
+                                                summary_data = {
+                                                    "target_id": stored_amendment["id"],
+                                                    "target_type": "amendment",
+                                                    "summary": amendment_summary["summary"],
+                                                    "perspective": amendment_summary["perspective"],
+                                                    "key_points": amendment_summary["key_points"],
+                                                    "estimated_cost_impact": amendment_summary["estimated_cost_impact"],
+                                                    "government_growth_analysis": amendment_summary["government_growth_analysis"],
+                                                    "market_impact_analysis": amendment_summary["market_impact_analysis"],
+                                                    "liberty_impact_analysis": amendment_summary["liberty_impact_analysis"]
+                                                }
+                                                db_service.upsert_ai_summary(summary_data)
+                                        except Exception as e:
+                                            logger.error(f"Error processing amendment summary: {str(e)}")
+                                except Exception as e:
+                                    logger.error(f"Error processing amendment: {str(e)}")
+                                    continue
+                                
                     except Exception as e:
                         logger.error(f"Error storing bill {bill.get('type')}{bill.get('number')}: {str(e)}\n{traceback.format_exc()}")
                         continue
                     
-                    # Generate AI summary
+                    # Generate AI summary for bill
                     try:
                         summary = await ai_service.generate_bill_summary(bill_details)
                     except Exception as e:
                         logger.error(f"Error generating summary for bill {bill.get('type')}{bill.get('number')}: {str(e)}\n{traceback.format_exc()}")
                         continue
                     
-                    # Store AI summary
+                    # Store AI summary for bill
                     try:
                         summary_data = {
                             "target_id": stored_bill["id"],
