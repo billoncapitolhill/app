@@ -61,3 +61,7 @@ coverage.xml
 # Local development
 .local/
 local_settings.py
+test_db_connection.py
+setup_database.py
+apply_migration.py
+apply_schema.py

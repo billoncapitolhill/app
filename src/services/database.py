@@ -50,7 +50,10 @@ class DatabaseService:
             amendment_data = self._serialize_datetime(amendment_data)
             
             # First, insert/update the amendment
-            result = self.client.table("amendments").upsert(amendment_data).execute()
+            result = self.client.table("amendments").upsert(
+                amendment_data,
+                on_conflict="congress_number,amendment_type,amendment_number"
+            ).execute()
             if result.data:
                 logger.info("Successfully upserted amendment %s", amendment_data.get("amendment_number"))
                 return result.data[0]
@@ -79,7 +82,10 @@ class DatabaseService:
                 raise Exception(f"Target {target_type} with ID {target_id} not found")
             
             # Then, insert/update the AI summary
-            result = self.client.table("ai_summaries").upsert(summary_data).execute()
+            result = self.client.table("ai_summaries").upsert(
+                summary_data,
+                on_conflict="target_id,target_type"
+            ).execute()
             if result.data:
                 logger.info("Successfully upserted AI summary for %s %s", target_type, target_id)
                 return result.data[0]
@@ -108,7 +114,10 @@ class DatabaseService:
                 raise Exception(f"Target {target_type} with ID {target_id} not found")
             
             # Then, insert/update the processing status
-            result = self.client.table("processing_status").upsert(status_data).execute()
+            result = self.client.table("processing_status").upsert(
+                status_data,
+                on_conflict="target_id,target_type"
+            ).execute()
             if result.data:
                 logger.info("Successfully updated processing status for %s %s", target_type, target_id)
                 return result.data[0]
@@ -121,11 +130,12 @@ class DatabaseService:
     def get_bills_for_processing(self, limit: int = 100) -> List[Dict]:
         """Get bills that need to be processed or updated."""
         try:
-            return (self.client.table("bills")
+            result = (self.client.table("bills")
                     .select("*")
                     .order("updated_at", desc=True)
                     .limit(limit)
                     .execute())
+            return result.data if result.data else []
         except Exception as e:
             logger.error(f"Error getting bills for processing: {str(e)}")
             raise
@@ -133,31 +143,45 @@ class DatabaseService:
     def get_amendments_for_processing(self, limit: int = 100) -> List[Dict]:
         """Get amendments that need to be processed or updated."""
         try:
-            return (self.client.table("amendments")
+            result = (self.client.table("amendments")
                     .select("*")
                     .order("updated_at", desc=True)
                     .limit(limit)
                     .execute())
+            return result.data if result.data else []
         except Exception as e:
             logger.error(f"Error getting amendments for processing: {str(e)}")
             raise
 
-    def get_bill_with_summaries(self, congress: int, bill_type: str, bill_number: int) -> Dict:
+    def get_bill_with_summaries(self, congress: int, bill_type: str, bill_number: int) -> Optional[Dict]:
         """Get a bill with its AI summaries and amendments."""
         try:
             # First, get the bill
-            result = self.client.table("bills").select("*").eq("congress_number", congress).eq("bill_type", bill_type).eq("bill_number", bill_number).execute()
+            result = (self.client.table("bills")
+                    .select("*")
+                    .eq("congress_number", congress)
+                    .eq("bill_type", bill_type)
+                    .eq("bill_number", bill_number)
+                    .single()
+                    .execute())
             
             if not result.data:
                 return None
             
-            bill = result.data[0]
+            bill = result.data
             
             # Then, get the AI summaries for the bill
-            summaries = self.client.table("ai_summaries").select("*").eq("target_id", bill["id"]).eq("target_type", "bill").execute()
+            summaries = (self.client.table("ai_summaries")
+                      .select("*")
+                      .eq("target_id", bill["id"])
+                      .eq("target_type", "bill")
+                      .execute())
             
             # Finally, get the amendments for the bill
-            amendments = self.client.table("amendments").select("*").eq("bill_id", bill["id"]).execute()
+            amendments = (self.client.table("amendments")
+                       .select("*")
+                       .eq("bill_id", bill["id"])
+                       .execute())
             
             # Combine the results
             bill["ai_summaries"] = summaries.data if summaries.data else []
@@ -168,43 +192,56 @@ class DatabaseService:
             logger.error("Error getting bill with summaries: %s", str(e))
             return None
 
-    def get_amendment_with_summaries(self, congress: int, amendment_type: str, amendment_number: int) -> Dict:
+    def get_amendment_with_summaries(self, congress: int, amendment_type: str, amendment_number: int) -> Optional[Dict]:
         """Get an amendment with its AI summaries."""
         try:
-            return (self.client.table("amendments")
+            result = (self.client.table("amendments")
                     .select("*, ai_summaries(*)")
                     .eq("congress_number", congress)
                     .eq("amendment_type", amendment_type)
                     .eq("amendment_number", amendment_number)
                     .single()
                     .execute())
+            return result.data if result.data else None
         except Exception as e:
             logger.error(f"Error getting amendment with summaries: {str(e)}")
-            raise
+            return None
 
     def get_recent_summaries(self, limit: int = 10) -> List[Dict]:
         """Get the most recent AI summaries with their associated bills or amendments."""
         try:
             # Get the most recent AI summaries
-            summaries = self.client.table("ai_summaries").select("*").order("created_at", desc=True).limit(limit).execute()
+            result = (self.client.table("ai_summaries")
+                    .select("*")
+                    .order("created_at", desc=True)
+                    .limit(limit)
+                    .execute())
             
-            if not summaries.data:
+            if not result.data:
                 return []
             
             # For each summary, get its associated bill or amendment
-            result = []
-            for summary in summaries.data:
+            summaries = []
+            for summary in result.data:
                 if summary["target_type"] == "bill":
-                    target = self.client.table("bills").select("*").eq("id", summary["target_id"]).single().execute()
+                    target = (self.client.table("bills")
+                           .select("*")
+                           .eq("id", summary["target_id"])
+                           .single()
+                           .execute())
                     if target.data:
                         summary["bill"] = target.data
                 else:  # target_type == "amendment"
-                    target = self.client.table("amendments").select("*").eq("id", summary["target_id"]).single().execute()
+                    target = (self.client.table("amendments")
+                           .select("*")
+                           .eq("id", summary["target_id"])
+                           .single()
+                           .execute())
                     if target.data:
                         summary["amendment"] = target.data
-                result.append(summary)
+                summaries.append(summary)
             
-            return result
+            return summaries
         except Exception as e:
             logger.error("Error getting recent summaries: %s", str(e))
             raise
